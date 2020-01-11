@@ -28,7 +28,7 @@ common opts
 library
   import:              opts
   exposed-modules:     Engine
-                     , Engine.Loader
+                     , Engine.Utils
   -- other-modules:
   -- other-extensions:
   build-depends:       base ^>=4.13.0.0

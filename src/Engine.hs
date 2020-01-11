@@ -1,22 +1,22 @@
 {-# LANGUAGE QuasiQuotes #-}
-module Engine (someFunc) where
+module Engine (start) where
 
 import Control.Exception (Exception, bracket, throwIO)
 import Control.Monad (forever, void)
 import Data.ByteString (ByteString)
 import Graphics.GL.Core45
 import Graphics.GL.Types
-import NeatInterpolation
+import NeatInterpolation (text)
 import qualified Data.Text.Encoding as T
 import qualified Data.Vector.Storable as V
-import qualified Engine.Loader as Loader
+import qualified Engine.Utils as Utils
 import qualified Graphics.UI.GLFW as GLFW
 
 data CloseException = CloseException deriving Show
 instance Exception CloseException
 
-vertexShaderSource :: ByteString
-vertexShaderSource = T.encodeUtf8
+vertexShaderSrc :: ByteString
+vertexShaderSrc = T.encodeUtf8
   [text|
     #version 130
     in vec3 position;
@@ -25,8 +25,8 @@ vertexShaderSource = T.encodeUtf8
     }
   |]
 
-fragmentShaderSource :: ByteString
-fragmentShaderSource = T.encodeUtf8
+fragmentShaderSrc :: ByteString
+fragmentShaderSrc = T.encodeUtf8
   [text|
     #version 130
     out vec4 color;
@@ -77,25 +77,25 @@ mkWindow params = do
 freeWindow :: GLFW.Window -> IO ()
 freeWindow window = GLFW.destroyWindow window >> GLFW.terminate
 
-gameLoop :: Loader.RawModel -> GLFW.Window -> IO ()
+gameLoop :: Utils.RawModel -> GLFW.Window -> IO ()
 gameLoop model window = forever $ do
   glClearColor 0.0 0.0 1.0 1.0
   glClear GL_COLOR_BUFFER_BIT
-  Loader.render model
+  Utils.render model
   GLFW.swapBuffers window
   GLFW.pollEvents
 
-someFunc :: IO ()
-someFunc = do
+start :: IO ()
+start = do
   let params = WindowParams keyPressed mousePressed
   bracket (mkWindow params) freeWindow $ \window -> do
-    vertexShader <- Loader.loadShader GL_VERTEX_SHADER vertexShaderSource
-    fragmentShader <- Loader.loadShader GL_FRAGMENT_SHADER fragmentShaderSource
-    program <- Loader.linkShaders [vertexShader, fragmentShader]
-    glDeleteShader vertexShader
-    glDeleteShader fragmentShader
-
+    program <-
+      bracket loadVertexShader glDeleteShader $ \vertexShader ->
+      bracket loadFragmentShader glDeleteShader $ \fragmentShader ->
+        Utils.linkShaders [vertexShader, fragmentShader]
     glUseProgram program
-
-    model <- Loader.loadToVAO vertices
+    model <- Utils.loadVAO vertices
     gameLoop model window
+ where
+  loadVertexShader = Utils.loadShader GL_VERTEX_SHADER vertexShaderSrc
+  loadFragmentShader = Utils.loadShader GL_FRAGMENT_SHADER fragmentShaderSrc

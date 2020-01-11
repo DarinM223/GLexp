@@ -1,9 +1,9 @@
-module Engine.Loader
+module Engine.Utils
   ( RawModel (..)
   , errorString
   , loadShader
   , linkShaders
-  , loadToVAO
+  , loadVAO
   , render
   ) where
 
@@ -31,8 +31,8 @@ instance Exception ShaderException
 newtype LinkException = LinkException String deriving Show
 instance Exception LinkException
 
-loadToVAO :: V.Vector GLfloat -> IO RawModel
-loadToVAO v = V.unsafeWith v $ \vPtr -> do
+loadVAO :: V.Vector GLfloat -> IO RawModel
+loadVAO v = V.unsafeWith v $ \vPtr -> do
   vao <- alloca $ \vaoPtr -> do
     glGenVertexArrays 1 vaoPtr
     peek vaoPtr
@@ -52,8 +52,10 @@ loadToVAO v = V.unsafeWith v $ \vPtr -> do
     stride   -- Distance between each vertex
     nullPtr  -- Offset for first vertex
   glEnableVertexAttribArray 0
+
   glBindBuffer GL_ARRAY_BUFFER 0
   glBindVertexArray 0
+
   return RawModel { modelVaoId       = vao
                   , modelVertexCount = fromIntegral $ V.length v `quot` 3
                   }
@@ -79,8 +81,8 @@ loadShader shaderType bs = do
     alloca $ \resultPtr ->
     allocaArray infoLength $ \infoLog -> do
       glGetShaderInfoLog shader (fromIntegral infoLength) resultPtr infoLog
-      result <- peek resultPtr
-      logBytes <- peekArray (fromIntegral result) infoLog
+      logLength <- peek resultPtr
+      logBytes <- peekArray (fromIntegral logLength) infoLog
       throwIO $ ShaderException $ fmap (toEnum . fromEnum) logBytes
   return shader
 
@@ -96,8 +98,8 @@ linkShaders shaders = do
     alloca $ \resultPtr ->
     allocaArray infoLength $ \infoLog -> do
       glGetProgramInfoLog program (fromIntegral infoLength) resultPtr infoLog
-      result <- peek resultPtr
-      logBytes <- peekArray (fromIntegral result) infoLog
+      logLength <- peek resultPtr
+      logBytes <- peekArray (fromIntegral logLength) infoLog
       throwIO $ LinkException $ fmap (toEnum . fromEnum) logBytes
   return program
 

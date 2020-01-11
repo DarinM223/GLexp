@@ -1,6 +1,6 @@
 module Main where
 
-import qualified Engine (someFunc)
+import qualified Engine (start)
 
 main :: IO ()
-main = Engine.someFunc
+main = Engine.start
