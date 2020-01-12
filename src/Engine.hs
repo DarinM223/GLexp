@@ -37,19 +37,17 @@ fragmentShaderSrc = T.encodeUtf8
 
 vertices :: V.Vector GLfloat
 vertices = V.fromList
-  [ -0.5, -0.5, 0.0
+  [ -0.5, 0.5, 0.0
+  , -0.5, -0.5, 0.0
   , 0.5, -0.5, 0.0
-  , 0.0, 0.5, 0.0
+  , 0.5, 0.5, 0.0
   ]
-  --[ -- Left bottom triangle
-  --  -0.5, 0.5, 0.0
-  --, -0.5, -0.5, 0.0
-  --, 0.5, -0.5, 0.0
-  --  -- Right top triangle
-  --, 0.5, -0.5, 0.0
-  --, 0.5, 0.5, 0.0
-  --, -0.5, 0.5, 0.0
-  --]
+
+indices :: V.Vector GLuint
+indices = V.fromList
+  [ 0, 1, 3 -- Top left triangle
+  , 3, 1, 2 -- Bottom right triangle
+  ]
 
 data WindowParams = WindowParams
   { windowKeyCallback   :: !GLFW.KeyCallback
@@ -94,7 +92,7 @@ start = do
       bracket loadFragmentShader glDeleteShader $ \fragmentShader ->
         Utils.linkShaders [vertexShader, fragmentShader]
     glUseProgram program
-    model <- Utils.loadVAO vertices
+    model <- Utils.loadVAO vertices indices
     gameLoop model window
  where
   loadVertexShader = Utils.loadShader GL_VERTEX_SHADER vertexShaderSrc

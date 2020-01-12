@@ -31,8 +31,11 @@ instance Exception ShaderException
 newtype LinkException = LinkException String deriving Show
 instance Exception LinkException
 
-loadVAO :: V.Vector GLfloat -> IO RawModel
-loadVAO v = V.unsafeWith v $ \vPtr -> do
+loadVAO :: V.Vector GLfloat -- ^ Positions
+        -> V.Vector GLuint  -- ^ Indices
+        -> IO RawModel
+loadVAO v e = V.unsafeWith v $ \vPtr ->
+              V.unsafeWith e $ \ePtr -> do
   vao <- alloca $ \vaoPtr -> do
     glGenVertexArrays 1 vaoPtr
     peek vaoPtr
@@ -42,8 +45,14 @@ loadVAO v = V.unsafeWith v $ \vPtr -> do
     glGenBuffers 1 vboPtr
     peek vboPtr
   glBindBuffer GL_ARRAY_BUFFER vbo
-
   glBufferData GL_ARRAY_BUFFER vSize (castPtr vPtr) GL_STATIC_DRAW
+
+  ebo <- alloca $ \eboPtr -> do
+    glGenBuffers 1 eboPtr
+    peek eboPtr
+  glBindBuffer GL_ELEMENT_ARRAY_BUFFER ebo
+  glBufferData GL_ELEMENT_ARRAY_BUFFER eSize (castPtr ePtr) GL_STATIC_DRAW
+
   glVertexAttribPointer
     0        -- Attribute number to set
     3        -- Size of each vertex
@@ -57,10 +66,11 @@ loadVAO v = V.unsafeWith v $ \vPtr -> do
   glBindVertexArray 0
 
   return RawModel { modelVaoId       = vao
-                  , modelVertexCount = fromIntegral $ V.length v `quot` 3
+                  , modelVertexCount = fromIntegral $ V.length e
                   }
  where
   vSize = fromIntegral $ sizeOf (undefined :: GLfloat) * V.length v
+  eSize = fromIntegral $ sizeOf (undefined :: GLuint) * V.length e
   stride = fromIntegral $ sizeOf (undefined :: GLfloat) * 3
 
 infoLength :: Int
@@ -106,7 +116,7 @@ linkShaders shaders = do
 render :: RawModel -> IO ()
 render RawModel{ modelVaoId = vao, modelVertexCount = vertexCount } = do
   glBindVertexArray vao
-  glDrawArrays GL_TRIANGLES 0 vertexCount
+  glDrawElements GL_TRIANGLES vertexCount GL_UNSIGNED_INT nullPtr
   glBindVertexArray 0
 
 errorString :: GLenum -> String
