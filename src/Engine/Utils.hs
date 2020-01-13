@@ -2,18 +2,19 @@ module Engine.Utils
   ( RawModel (..)
   , errorString
   , loadShader
+  , loadTexture
   , linkShaders
   , loadVAO
-  , render
   ) where
 
+import Codec.Picture
 import Control.Exception (Exception, throwIO)
 import Control.Monad (when)
 import Data.Foldable (traverse_)
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Array (allocaArray, peekArray)
 import Foreign.Marshal.Utils (with)
-import Foreign.Ptr (castPtr, nullPtr)
+import Foreign.Ptr (castPtr, nullPtr, plusPtr)
 import Foreign.Storable (peek, sizeOf)
 import Graphics.GL.Core45
 import Graphics.GL.Types
@@ -22,7 +23,7 @@ import qualified Data.ByteString.Unsafe as BS
 import qualified Data.Vector.Storable as V
 
 data RawModel = RawModel
-  { modelVaoId       :: {-# UNPACK #-} !GLuint
+  { modelVao         :: {-# UNPACK #-} !GLuint
   , modelVertexCount :: {-# UNPACK #-} !GLsizei
   } deriving Show
 
@@ -62,16 +63,51 @@ loadVAO v e = V.unsafeWith v $ \vPtr ->
     nullPtr  -- Offset for first vertex
   glEnableVertexAttribArray 0
 
+  glVertexAttribPointer
+    1
+    2
+    GL_FLOAT
+    GL_FALSE
+    stride
+    (nullPtr `plusPtr` (3 * sizeOf (undefined :: GLfloat)))
+  glEnableVertexAttribArray 1
+
   glBindBuffer GL_ARRAY_BUFFER 0
   glBindVertexArray 0
 
-  return RawModel { modelVaoId       = vao
+  return RawModel { modelVao         = vao
                   , modelVertexCount = fromIntegral $ V.length e
                   }
  where
   vSize = fromIntegral $ sizeOf (undefined :: GLfloat) * V.length v
   eSize = fromIntegral $ sizeOf (undefined :: GLuint) * V.length e
-  stride = fromIntegral $ sizeOf (undefined :: GLfloat) * 3
+  stride = fromIntegral $ sizeOf (undefined :: GLfloat) * 5
+
+loadTexture :: FilePath -> IO GLuint
+loadTexture path = do
+  Right file <- readImage path
+  let ipixelrgb8 = convertRGB8 file
+      iWidth     = fromIntegral $ imageWidth ipixelrgb8
+      iHeight    = fromIntegral $ imageHeight ipixelrgb8
+      iData      = imageData ipixelrgb8
+  texture <- alloca $ \texturePtr -> do
+    glGenTextures 1 texturePtr
+    peek texturePtr
+  glBindTexture GL_TEXTURE_2D texture
+  V.unsafeWith iData $ \dataPtr ->
+    glTexImage2D
+      GL_TEXTURE_2D
+      0
+      GL_RGB
+      iWidth
+      iHeight
+      0
+      GL_RGB
+      GL_UNSIGNED_BYTE
+      (castPtr dataPtr)
+  glGenerateMipmap GL_TEXTURE_2D
+  glBindTexture GL_TEXTURE_2D 0
+  return texture
 
 infoLength :: Int
 infoLength = 512
@@ -112,12 +148,6 @@ linkShaders shaders = do
       logBytes <- peekArray (fromIntegral logLength) infoLog
       throwIO $ LinkException $ fmap (toEnum . fromEnum) logBytes
   return program
-
-render :: RawModel -> IO ()
-render RawModel{ modelVaoId = vao, modelVertexCount = vertexCount } = do
-  glBindVertexArray vao
-  glDrawElements GL_TRIANGLES vertexCount GL_UNSIGNED_INT nullPtr
-  glBindVertexArray 0
 
 errorString :: GLenum -> String
 errorString GL_NO_ERROR                      = "No error"

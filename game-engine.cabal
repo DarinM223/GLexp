@@ -35,6 +35,7 @@ library
                      , bytestring
                      , gl
                      , GLFW-b
+                     , JuicyPixels
                      , neat-interpolation
                      , StateVar
                      , text
