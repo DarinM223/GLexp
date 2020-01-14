@@ -38,7 +38,7 @@ library
                      , JuicyPixels
                      , linear
                      , neat-interpolation
-                     , StateVar
+                     , primitive
                      , text
                      , vector
   hs-source-dirs:      src
