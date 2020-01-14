@@ -3,17 +3,20 @@
 module Engine (start) where
 
 import Control.Exception (Exception, bracket, throwIO)
-import Control.Monad (forever, void)
+import Control.Monad (void)
 import Data.ByteString (ByteString)
 import Foreign.C.String (withCString)
-import Foreign.Ptr (nullPtr)
+import Foreign.Marshal.Utils (with)
+import Foreign.Ptr (castPtr, nullPtr)
 import Graphics.GL.Core45
 import Graphics.GL.Types
+import Linear ((!!*))
 import NeatInterpolation (text)
 import qualified Data.Text.Encoding as T
 import qualified Data.Vector.Storable as V
 import qualified Engine.Utils as Utils
 import qualified Graphics.UI.GLFW as GLFW
+import qualified Linear as Linear
 
 data CloseException = CloseException deriving Show
 instance Exception CloseException
@@ -25,8 +28,9 @@ vertexShaderSrc = T.encodeUtf8
     in vec3 position;
     in vec2 texCoord;
     out vec2 v_texCoord;
+    uniform mat4 transform;
     void main() {
-      gl_Position = vec4(position, 1.0);
+      gl_Position = transform * vec4(position, 1.0);
       v_texCoord = texCoord;
     }
   |]
@@ -47,10 +51,10 @@ fragmentShaderSrc = T.encodeUtf8
 
 vertices :: V.Vector GLfloat
 vertices = V.fromList
-  [ -0.5, 0.5, 0.0   , 0.0, 0.0
-  , -0.5, -0.5, 0.0  , 0.0, 1.0
-  , 0.5, -0.5, 0.0   , 1.0, 1.0
-  , 0.5, 0.5, 0.0    , 1.0, 0.0
+  [ -1.0, 0.5, 0.0   , 0.0, 0.0
+  , -1.0, -0.5, 0.0  , 0.0, 1.0
+  , 1.0, -0.5, 0.0   , 1.0, 1.0
+  , 1.0, 0.5, 0.0    , 1.0, 0.0
   ]
 
 indices :: V.Vector GLuint
@@ -100,25 +104,38 @@ gameLoop window = do
     glGetUniformLocation program name
   uniform1Location <- withCString "texture1" $ \name ->
     glGetUniformLocation program name
+  transformLocation <- withCString "transform" $ \name ->
+    glGetUniformLocation program name
 
-  forever $ do
-    glClearColor 0.0 0.0 1.0 1.0
-    glClear GL_COLOR_BUFFER_BIT
+  let
+    loop drot = do
+      glClearColor 0.0 0.0 1.0 1.0
+      glClear GL_COLOR_BUFFER_BIT
 
-    glActiveTexture GL_TEXTURE0
-    glBindTexture GL_TEXTURE_2D texture0
-    glUniform1i uniform0Location 0
+      glActiveTexture GL_TEXTURE0
+      glBindTexture GL_TEXTURE_2D texture0
+      glUniform1i uniform0Location 0
 
-    glActiveTexture GL_TEXTURE1
-    glBindTexture GL_TEXTURE_2D texture1
-    glUniform1i uniform1Location 1
+      glActiveTexture GL_TEXTURE1
+      glBindTexture GL_TEXTURE_2D texture1
+      glUniform1i uniform1Location 1
+      let rotQ = Linear.axisAngle
+            (Linear.V3 (0.0 :: GLfloat) 0.0 1.0)
+            (pi / 2 + drot)
+          rotM33 = Linear.fromQuaternion rotQ !!* 0.5
+          matrix = Linear.mkTransformationMat rotM33 (Linear.V3 0 0 0)
 
-    glBindVertexArray modelVao
-    glDrawElements GL_TRIANGLES modelVertexCount GL_UNSIGNED_INT nullPtr
-    glBindVertexArray 0
+      with matrix $ \matrixPtr ->
+        glUniformMatrix4fv transformLocation 1 GL_TRUE (castPtr matrixPtr)
 
-    GLFW.swapBuffers window
-    GLFW.pollEvents
+      glBindVertexArray modelVao
+      glDrawElements GL_TRIANGLES modelVertexCount GL_UNSIGNED_INT nullPtr
+      glBindVertexArray 0
+
+      GLFW.swapBuffers window
+      GLFW.pollEvents
+      loop (drot + 0.01)
+  loop 0.0
  where
   loadVertexShader = Utils.loadShader GL_VERTEX_SHADER vertexShaderSrc
   loadFragmentShader = Utils.loadShader GL_FRAGMENT_SHADER fragmentShaderSrc

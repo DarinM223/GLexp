@@ -36,6 +36,7 @@ library
                      , gl
                      , GLFW-b
                      , JuicyPixels
+                     , linear
                      , neat-interpolation
                      , StateVar
                      , text
