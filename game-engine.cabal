@@ -29,6 +29,7 @@ library
   import:              opts
   exposed-modules:     Engine
                      , Engine.Entity
+                     , Engine.Game
                      , Engine.Utils
   -- other-modules:
   -- other-extensions:
