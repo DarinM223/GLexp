@@ -1,16 +1,16 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE QuasiQuotes #-}
-{-# LANGUAGE RecordWildCards #-}
 module Engine (start) where
 
 import Control.Exception (Exception, bracket, throwIO)
-import Control.Monad (forM_, void)
+import Control.Monad (forever, forM_, void)
 import Control.Monad.Primitive (PrimState)
 import Data.ByteString (ByteString)
+import Data.Foldable (traverse_)
+import Engine.Entity
 import Foreign.C.String (withCString)
 import Foreign.Marshal.Utils (with)
 import Foreign.Ptr (castPtr, nullPtr)
-import Foreign.Storable
 import Graphics.GL.Core45
 import Graphics.GL.Types
 import Linear ((!!*))
@@ -93,102 +93,118 @@ mkWindow params = do
 freeWindow :: GLFW.Window -> IO ()
 freeWindow window = GLFW.destroyWindow window >> GLFW.terminate
 
-data Entity = Entity
-  { entityPos :: {-# UNPACK #-} !(Linear.V3 GLfloat)
-  , entityRot :: {-# UNPACK #-} !GLfloat
-  , entityTex :: {-# UNPACK #-} !GLuint
-  } deriving Show
+type IOVec a = V.MVector (PrimState IO) a
 
-entityRotOffset :: Int
-entityRotOffset = sizeOf (undefined :: Linear.V3 GLfloat)
-
-entityTexOffset :: Int
-entityTexOffset = entityRotOffset + sizeOf (undefined :: GLfloat)
-
-instance Storable Entity where
-  sizeOf _ = sizeOf (undefined :: Linear.V3 GLfloat)
-           + sizeOf (undefined :: GLfloat)
-           + sizeOf (undefined :: GLuint)
-  alignment _ = maximum
-    [ alignment (undefined :: Linear.V3 GLfloat)
-    , alignment (undefined :: GLfloat)
-    , alignment (undefined :: GLuint)
-    ]
-  peek ptr = Entity
-    <$> peekByteOff ptr 0
-    <*> peekByteOff ptr entityRotOffset
-    <*> peekByteOff ptr entityTexOffset
-  poke ptr Entity{..} = do
-    pokeByteOff ptr 0 entityPos
-    pokeByteOff ptr entityRotOffset entityRot
-    pokeByteOff ptr entityTexOffset entityTex
-
-data Game = Game
-  { gameEntities :: {-# UNPACK #-} !(V.MVector (PrimState IO) Entity)
+-- | Program with a transformation matrix and two blended textures.
+data TwoTexProgram = TwoTexProgram
+  { pProgram           :: {-# UNPACK #-} !GLuint
+  , pTex0Location      :: {-# UNPACK #-} !GLint
+  , pTex1Location      :: {-# UNPACK #-} !GLint
+  , pTransformLocation :: {-# UNPACK #-} !GLint
   }
 
-mkGame :: [Entity] -> IO Game
-mkGame es = Game <$> V.unsafeThaw (V.fromList es)
-
-updateGame :: Game -> IO ()
-updateGame _ = undefined
-
-drawGame :: Game -> IO ()
-drawGame Game{..} =
-  forM_ [0..VM.length gameEntities - 1] $ \i -> do
-    entity <- VM.read gameEntities i
-    print entity
-
-gameLoop :: GLFW.Window -> IO ()
-gameLoop window = do
-  Utils.RawModel{..} <- Utils.loadVAO vertices indices
-  texture0 <- Utils.loadTexture "res/container.jpg"
-  texture1 <- Utils.loadTexture "res/awesomeface.png"
+mkProgram :: ByteString -> ByteString -> IO TwoTexProgram
+mkProgram vertexShaderSrc0 fragmentShaderSrc0 = do
   program <-
     bracket loadVertexShader glDeleteShader $ \vertexShader ->
     bracket loadFragmentShader glDeleteShader $ \fragmentShader ->
       Utils.linkShaders [vertexShader, fragmentShader]
-  glUseProgram program
-
-  uniform0Location <- withCString "texture0" $ \name ->
+  tex0Location <- withCString "texture0" $ \name ->
     glGetUniformLocation program name
-  uniform1Location <- withCString "texture1" $ \name ->
+  tex1Location <- withCString "texture1" $ \name ->
     glGetUniformLocation program name
   transformLocation <- withCString "transform" $ \name ->
     glGetUniformLocation program name
-
-  let
-    loop !drot = do
-      glClearColor 0.0 0.0 1.0 1.0
-      glClear GL_COLOR_BUFFER_BIT
-
-      glActiveTexture GL_TEXTURE0
-      glBindTexture GL_TEXTURE_2D texture0
-      glUniform1i uniform0Location 0
-
-      glActiveTexture GL_TEXTURE1
-      glBindTexture GL_TEXTURE_2D texture1
-      glUniform1i uniform1Location 1
-
-      let rotQ = Linear.axisAngle
-            (Linear.V3 (0.0 :: GLfloat) 0.0 1.0)
-            (pi / 2 + drot)
-          rotM33 = Linear.fromQuaternion rotQ !!* 0.5
-          matrix = Linear.mkTransformationMat rotM33 (Linear.V3 0 0 0)
-      with matrix $ \matrixPtr ->
-        glUniformMatrix4fv transformLocation 1 GL_TRUE (castPtr matrixPtr)
-
-      glBindVertexArray modelVao
-      glDrawElements GL_TRIANGLES modelVertexCount GL_UNSIGNED_INT nullPtr
-      glBindVertexArray 0
-
-      GLFW.swapBuffers window
-      GLFW.pollEvents
-      loop (drot + 0.01)
-  loop 0.0
+  return TwoTexProgram { pProgram           = program
+                       , pTex0Location      = tex0Location
+                       , pTex1Location      = tex1Location
+                       , pTransformLocation = transformLocation
+                       }
  where
-  loadVertexShader = Utils.loadShader GL_VERTEX_SHADER vertexShaderSrc
-  loadFragmentShader = Utils.loadShader GL_FRAGMENT_SHADER fragmentShaderSrc
+  loadVertexShader = Utils.loadShader GL_VERTEX_SHADER vertexShaderSrc0
+  loadFragmentShader = Utils.loadShader GL_FRAGMENT_SHADER fragmentShaderSrc0
+
+programSetUniforms
+  :: TwoTexProgram -> GLuint -> GLuint -> Linear.M44 GLfloat -> IO ()
+programSetUniforms p tex0 tex1 matrix = do
+  glActiveTexture GL_TEXTURE0
+  glBindTexture GL_TEXTURE_2D tex0
+  glUniform1i (pTex0Location p) 0
+
+  glActiveTexture GL_TEXTURE1
+  glBindTexture GL_TEXTURE_2D tex1
+  glUniform1i (pTex1Location p) 1
+
+  with matrix $ \matrixPtr ->
+    glUniformMatrix4fv (pTransformLocation p) 1 GL_TRUE (castPtr matrixPtr)
+
+data Game = Game
+  { gameEntities :: {-# UNPACK #-} !(IOVec Entity)
+  , gameProgram  :: {-# UNPACK #-} !TwoTexProgram
+  , gameTexture0 :: {-# UNPACK #-} !GLuint
+  , gameTexture1 :: {-# UNPACK #-} !GLuint
+  , gameRawModel :: {-# UNPACK #-} !Utils.RawModel
+  }
+
+initGame :: [Entity] -> IO Game
+initGame es = Game
+  <$> V.unsafeThaw (V.fromList es)
+  <*> mkProgram vertexShaderSrc fragmentShaderSrc
+  <*> Utils.loadTexture "res/container.jpg"
+  <*> Utils.loadTexture "res/awesomeface.png"
+  <*> Utils.loadVAO vertices indices
+
+updateGame :: Game -> IO ()
+updateGame g = traverse_ update [0..VM.length (gameEntities g) - 1]
+ where
+  update :: Int -> IO ()
+  update i = do
+    let
+      updateEntity :: Entity -> Entity
+      updateEntity !e = e { entityPos = entityPos e + Linear.V3 0.001 0.001 0.0
+                          , entityScale = entityScale e - 0.001
+                          }
+    VM.modify (gameEntities g) updateEntity i
+
+drawGame :: Game -> IO ()
+drawGame g = do
+  glUseProgram $ pProgram $ gameProgram g
+  forM_ [0..VM.length (gameEntities g) - 1] $ \i -> do
+    e <- VM.read (gameEntities g) i
+    let rotM33 = Linear.fromQuaternion (entityRot e) !!* entityScale e
+        matrix = Linear.mkTransformationMat rotM33 (entityPos e)
+    programSetUniforms (gameProgram g) (gameTexture0 g) (gameTexture1 g) matrix
+
+    let model = gameRawModel g
+    glBindVertexArray $ Utils.modelVao model
+    glDrawElements
+      GL_TRIANGLES (Utils.modelVertexCount model) GL_UNSIGNED_INT nullPtr
+    glBindVertexArray 0
+
+gameLoop :: GLFW.Window -> IO ()
+gameLoop window = do
+  game <- initGame
+    [ Entity
+      (Linear.V3 0 0 0)
+      (Linear.axisAngle (Linear.V3 (0.0 :: GLfloat) 0.0 1.0) (pi / 2))
+      0.5
+      0
+    , Entity
+      (Linear.V3 0.5 0 0)
+      (Linear.axisAngle (Linear.V3 (0.0 :: GLfloat) 0.0 1.0) (pi / 2))
+      0.2
+      0
+    ]
+
+  forever $ do
+    glClearColor 0.0 0.0 1.0 1.0
+    glClear GL_COLOR_BUFFER_BIT
+
+    updateGame game
+    drawGame game
+
+    GLFW.swapBuffers window
+    GLFW.pollEvents
 
 start :: IO ()
 start =
