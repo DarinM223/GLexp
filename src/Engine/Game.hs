@@ -28,9 +28,11 @@ vertexShaderSrc = T.encodeUtf8
     in vec3 position;
     in vec2 texCoord;
     out vec2 v_texCoord;
-    uniform mat4 transform;
+    uniform mat4 model;      // Transformation of the model
+    uniform mat4 view;       // Transformation of the camera
+    uniform mat4 projection; // Clipping coordinates outside FOV
     void main() {
-      gl_Position = transform * vec4(position, 1.0);
+      gl_Position = projection * view * model * vec4(position, 1.0);
       v_texCoord = texCoord;
     }
   |]
@@ -48,6 +50,15 @@ fragmentShaderSrc = T.encodeUtf8
       color = mix(texture(texture0, v_texCoord), texture(texture1, v_texCoord), 0.2);
     }
   |]
+
+perspectiveMat :: Int -> Int -> Linear.M44 GLfloat
+perspectiveMat width height =
+  Linear.perspective fov aspectRatio nearPlane farPlane
+ where
+  fov = 45 * (pi / 180)
+  aspectRatio = fromIntegral width / fromIntegral height
+  nearPlane = 0.1
+  farPlane = 1000
 
 vertices :: V.Vector GLfloat
 vertices = V.fromList
@@ -67,14 +78,18 @@ type IOVec a = V.MVector (PrimState IO) a
 
 -- | Program with a transformation matrix and two blended textures.
 data TwoTexProgram = TwoTexProgram
-  { pProgram           :: {-# UNPACK #-} !GLuint
-  , pTex0Location      :: {-# UNPACK #-} !GLint
-  , pTex1Location      :: {-# UNPACK #-} !GLint
-  , pTransformLocation :: {-# UNPACK #-} !GLint
+  { pProgram       :: {-# UNPACK #-} !GLuint
+  , pTex0Location  :: {-# UNPACK #-} !GLint
+  , pTex1Location  :: {-# UNPACK #-} !GLint
+  , pModelLocation :: {-# UNPACK #-} !GLint
+  , pViewLocation  :: {-# UNPACK #-} !GLint
+  , pProjLocation  :: {-# UNPACK #-} !GLint
+  , pWidth         :: {-# UNPACK #-} !Int
+  , pHeight        :: {-# UNPACK #-} !Int
   }
 
-mkProgram :: ByteString -> ByteString -> IO TwoTexProgram
-mkProgram vertexShaderSrc0 fragmentShaderSrc0 = do
+mkProgram :: Int -> Int -> ByteString -> ByteString -> IO TwoTexProgram
+mkProgram width height vertexShaderSrc0 fragmentShaderSrc0 = do
   program <-
     bracket loadVertexShader glDeleteShader $ \vertexShader ->
     bracket loadFragmentShader glDeleteShader $ \fragmentShader ->
@@ -83,20 +98,33 @@ mkProgram vertexShaderSrc0 fragmentShaderSrc0 = do
     glGetUniformLocation program name
   tex1Location <- withCString "texture1" $ \name ->
     glGetUniformLocation program name
-  transformLocation <- withCString "transform" $ \name ->
+  modelLocation <- withCString "model" $ \name ->
     glGetUniformLocation program name
-  return TwoTexProgram { pProgram           = program
-                       , pTex0Location      = tex0Location
-                       , pTex1Location      = tex1Location
-                       , pTransformLocation = transformLocation
+  viewLocation <- withCString "view" $ \name ->
+    glGetUniformLocation program name
+  projLocation <- withCString "projection" $ \name ->
+    glGetUniformLocation program name
+  return TwoTexProgram { pProgram       = program
+                       , pTex0Location  = tex0Location
+                       , pTex1Location  = tex1Location
+                       , pModelLocation = modelLocation
+                       , pViewLocation  = viewLocation
+                       , pProjLocation  = projLocation
+                       , pWidth         = width
+                       , pHeight        = height
                        }
  where
   loadVertexShader = Utils.loadShader GL_VERTEX_SHADER vertexShaderSrc0
   loadFragmentShader = Utils.loadShader GL_FRAGMENT_SHADER fragmentShaderSrc0
 
 programSetUniforms
-  :: TwoTexProgram -> GLuint -> GLuint -> Linear.M44 GLfloat -> IO ()
-programSetUniforms p tex0 tex1 matrix = do
+  :: TwoTexProgram
+  -> GLuint
+  -> GLuint
+  -> Linear.M44 GLfloat
+  -> Linear.M44 GLfloat
+  -> IO ()
+programSetUniforms p tex0 tex1 model view = do
   glActiveTexture GL_TEXTURE0
   glBindTexture GL_TEXTURE_2D tex0
   glUniform1i (pTex0Location p) 0
@@ -105,35 +133,39 @@ programSetUniforms p tex0 tex1 matrix = do
   glBindTexture GL_TEXTURE_2D tex1
   glUniform1i (pTex1Location p) 1
 
-  with matrix $ \matrixPtr ->
-    glUniformMatrix4fv (pTransformLocation p) 1 GL_TRUE (castPtr matrixPtr)
+  with model $ \matrixPtr ->
+    glUniformMatrix4fv (pModelLocation p) 1 GL_TRUE (castPtr matrixPtr)
+  with view $ \matrixPtr ->
+    glUniformMatrix4fv (pViewLocation p) 1 GL_TRUE (castPtr matrixPtr)
+  with (perspectiveMat (pWidth p) (pHeight p)) $ \matrixPtr ->
+    glUniformMatrix4fv (pProjLocation p) 1 GL_TRUE (castPtr matrixPtr)
 
 data Game = Game
   { gameEntities :: {-# UNPACK #-} !(IOVec Entity)
   , gameProgram  :: {-# UNPACK #-} !TwoTexProgram
+  , gameView     :: {-# UNPACK #-} !(Linear.M44 GLfloat)
   , gameTexture0 :: {-# UNPACK #-} !GLuint
   , gameTexture1 :: {-# UNPACK #-} !GLuint
   , gameRawModel :: {-# UNPACK #-} !Utils.RawModel
   }
 
-init :: [Entity] -> IO Game
-init es = Game
+init :: Int -> Int -> [Entity] -> IO Game
+init w h es = Game
   <$> V.unsafeThaw (V.fromList es)
-  <*> mkProgram vertexShaderSrc fragmentShaderSrc
+  <*> mkProgram w h vertexShaderSrc fragmentShaderSrc
+  <*> pure (Linear.lookAt (Linear.V3 0 0 2) (Linear.V3 0 0 0) (Linear.V3 0 1 0))
   <*> Utils.loadTexture "res/container.jpg"
   <*> Utils.loadTexture "res/awesomeface.png"
   <*> Utils.loadVAO vertices indices
 
-update :: Game -> IO Game
-update g0 = foldlM update' g0 [0..VM.length (gameEntities g0) - 1]
+update :: GLfloat -> Game -> IO Game
+update _ g0 = foldlM update' g0 [0..VM.length (gameEntities g0) - 1]
  where
   update' :: Game -> Int -> IO Game
   update' !g i = do
     let
       updateEntity :: Entity -> Entity
-      updateEntity !e = e { entityPos = entityPos e + Linear.V3 0.001 0.001 0.0
-                          , entityScale = entityScale e - 0.001
-                          }
+      updateEntity !e = e { entityPos = entityPos e + Linear.V3 0 0 0.001 }
     VM.modify (gameEntities g) updateEntity i
     return g
 
@@ -144,7 +176,8 @@ draw g = do
     e <- VM.read (gameEntities g) i
     let rotM33 = Linear.fromQuaternion (entityRot e) !!* entityScale e
         matrix = Linear.mkTransformationMat rotM33 (entityPos e)
-    programSetUniforms (gameProgram g) (gameTexture0 g) (gameTexture1 g) matrix
+    programSetUniforms
+      (gameProgram g) (gameTexture0 g) (gameTexture1 g) matrix (gameView g)
 
     let model = gameRawModel g
     glBindVertexArray $ Utils.modelVao model

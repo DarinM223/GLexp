@@ -31,6 +31,8 @@ mkWindow params = do
   GLFW.defaultWindowHints
   Just win <- GLFW.createWindow 640 480 "GLFW Demo" Nothing Nothing
   GLFW.makeContextCurrent (Just win)
+  (x, y) <- GLFW.getFramebufferSize win
+  glViewport 0 0 (fromIntegral x) (fromIntegral y)
   GLFW.setKeyCallback win (Just (windowKeyCallback params))
   GLFW.setMouseButtonCallback win (Just (windowMouseCallback params))
   GLFW.setWindowCloseCallback win (Just (const $ throwIO CloseException))
@@ -41,7 +43,8 @@ freeWindow window = GLFW.destroyWindow window >> GLFW.terminate
 
 gameLoop :: GLFW.Window -> IO ()
 gameLoop window = do
-  game0 <- Game.init
+  (w, h) <- GLFW.getFramebufferSize window
+  game0 <- Game.init w h
     [ Entity
       (Linear.V3 0 0 0)
       (Linear.axisAngle (Linear.V3 (0.0 :: GLfloat) 0.0 1.0) (pi / 2))
@@ -56,10 +59,11 @@ gameLoop window = do
 
   let loop !game = do
         GLFW.pollEvents
+        Just time <- GLFW.getTime
+        game' <- Game.update (realToFrac time) game
+
         glClearColor 0.0 0.0 1.0 1.0
         glClear GL_COLOR_BUFFER_BIT
-
-        game' <- Game.update game
         Game.draw game'
 
         GLFW.swapBuffers window
