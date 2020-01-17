@@ -3,6 +3,7 @@ module Engine (start) where
 
 import Control.Exception (Exception, bracket, throwIO)
 import Control.Monad (void)
+import Data.Bits ((.|.))
 import Engine.Entity
 import Graphics.GL.Core45
 import Graphics.GL.Types
@@ -56,6 +57,7 @@ gameLoop window = do
       0.2
       0
     ]
+  glEnable GL_DEPTH_TEST
 
   let loop !game = do
         GLFW.pollEvents
@@ -63,7 +65,7 @@ gameLoop window = do
         game' <- Game.update (realToFrac time) game
 
         glClearColor 0.0 0.0 1.0 1.0
-        glClear GL_COLOR_BUFFER_BIT
+        glClear $ GL_COLOR_BUFFER_BIT .|. GL_DEPTH_BUFFER_BIT
         Game.draw game'
 
         GLFW.swapBuffers window

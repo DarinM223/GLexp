@@ -3,6 +3,7 @@
 module Engine.Game where
 
 import Control.Exception (bracket)
+import Control.Lens ((&), (%~))
 import Control.Monad (forM_)
 import Control.Monad.Primitive (PrimState)
 import Data.ByteString (ByteString)
@@ -14,6 +15,7 @@ import Foreign.Ptr (castPtr, nullPtr)
 import Graphics.GL.Core45
 import Graphics.GL.Types
 import Linear ((!!*))
+import Linear.Quaternion (_i)
 import NeatInterpolation (text)
 import qualified Data.Text.Encoding as T
 import qualified Data.Vector.Storable as V
@@ -118,13 +120,8 @@ mkProgram width height vertexShaderSrc0 fragmentShaderSrc0 = do
   loadFragmentShader = Utils.loadShader GL_FRAGMENT_SHADER fragmentShaderSrc0
 
 programSetUniforms
-  :: TwoTexProgram
-  -> GLuint
-  -> GLuint
-  -> Linear.M44 GLfloat
-  -> Linear.M44 GLfloat
-  -> IO ()
-programSetUniforms p tex0 tex1 model view = do
+  :: TwoTexProgram -> GLuint -> GLuint -> Linear.M44 GLfloat -> IO ()
+programSetUniforms p tex0 tex1 view = do
   glActiveTexture GL_TEXTURE0
   glBindTexture GL_TEXTURE_2D tex0
   glUniform1i (pTex0Location p) 0
@@ -133,12 +130,14 @@ programSetUniforms p tex0 tex1 model view = do
   glBindTexture GL_TEXTURE_2D tex1
   glUniform1i (pTex1Location p) 1
 
-  with model $ \matrixPtr ->
-    glUniformMatrix4fv (pModelLocation p) 1 GL_TRUE (castPtr matrixPtr)
   with view $ \matrixPtr ->
     glUniformMatrix4fv (pViewLocation p) 1 GL_TRUE (castPtr matrixPtr)
   with (perspectiveMat (pWidth p) (pHeight p)) $ \matrixPtr ->
     glUniformMatrix4fv (pProjLocation p) 1 GL_TRUE (castPtr matrixPtr)
+
+programSetModel :: TwoTexProgram -> Linear.M44 GLfloat -> IO ()
+programSetModel p model = with model $ \matrixPtr ->
+  glUniformMatrix4fv (pModelLocation p) 1 GL_TRUE (castPtr matrixPtr)
 
 data Game = Game
   { gameEntities :: {-# UNPACK #-} !(IOVec Entity)
@@ -165,19 +164,23 @@ update _ g0 = foldlM update' g0 [0..VM.length (gameEntities g0) - 1]
   update' !g i = do
     let
       updateEntity :: Entity -> Entity
-      updateEntity !e = e { entityPos = entityPos e + Linear.V3 0 0 0.001 }
+      updateEntity !e = e { entityPos = entityPos e + Linear.V3 0 0 0.001
+                          , entityRot = entityRot e & _i %~ (+ 0.01)
+                          }
     VM.modify (gameEntities g) updateEntity i
     return g
 
 draw :: Game -> IO ()
 draw g = do
   glUseProgram $ pProgram $ gameProgram g
+  programSetUniforms
+    (gameProgram g) (gameTexture0 g) (gameTexture1 g) (gameView g)
+
   forM_ [0..VM.length (gameEntities g) - 1] $ \i -> do
     e <- VM.read (gameEntities g) i
     let rotM33 = Linear.fromQuaternion (entityRot e) !!* entityScale e
         matrix = Linear.mkTransformationMat rotM33 (entityPos e)
-    programSetUniforms
-      (gameProgram g) (gameTexture0 g) (gameTexture1 g) matrix (gameView g)
+    programSetModel (gameProgram g) matrix
 
     let model = gameRawModel g
     glBindVertexArray $ Utils.modelVao model

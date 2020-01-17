@@ -38,6 +38,7 @@ library
                      , gl
                      , GLFW-b
                      , JuicyPixels
+                     , lens
                      , linear
                      , neat-interpolation
                      , primitive
