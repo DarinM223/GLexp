@@ -1,3 +1,5 @@
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE OverloadedStrings #-}
 module Engine.Utils
   ( RawModel (..)
   , errorString
@@ -5,11 +7,12 @@ module Engine.Utils
   , loadTexture
   , linkShaders
   , loadVAO
+  , loadObj
   ) where
 
 import Codec.Picture
 import Control.Exception (Exception, throwIO)
-import Control.Monad (when)
+import Control.Monad (join, when)
 import Data.Foldable (traverse_)
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Array (allocaArray, peekArray)
@@ -20,6 +23,9 @@ import Graphics.GL.Core45
 import Graphics.GL.Types
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Unsafe as BS
+import qualified Data.Text.Lazy as T
+import qualified Data.Text.Lazy.IO as T
+import qualified Data.Vector as Vec
 import qualified Data.Vector.Storable as V
 
 data RawModel = RawModel
@@ -29,6 +35,7 @@ data RawModel = RawModel
 
 newtype ShaderException = ShaderException String deriving Show
 instance Exception ShaderException
+
 newtype LinkException = LinkException String deriving Show
 instance Exception LinkException
 
@@ -82,6 +89,77 @@ loadVAO v e = V.unsafeWith v $ \vPtr ->
   vSize = fromIntegral $ sizeOf (undefined :: GLfloat) * V.length v
   eSize = fromIntegral $ sizeOf (undefined :: GLuint) * V.length e
   stride = fromIntegral $ sizeOf (undefined :: GLfloat) * 5
+
+loadObj :: FilePath -> IO RawModel
+loadObj path = fmap
+  (V.fromList . convertVec . foldr build ([], [], [], []) . T.lines)
+  (T.readFile path) >>= toRawModel
+ where
+  build line (!vs, !vts, !vns, !fs) = case headWord of
+    Just "v"  -> (parse3:vs, vts, vns, fs)
+    Just "vt" -> (vs, parse2:vts, vns, fs)
+    Just "vn" -> (vs, vts, parse3:vns, fs)
+    Just "f"  -> (vs, vts, vns, parseF:fs)
+    _         -> (vs, vts, vns, fs)
+   where
+    parse2 :: [GLfloat]
+    parse2 = [read $ T.unpack $ words0 !! 1, read $ T.unpack $ words0 !! 2]
+
+    parse3 :: [GLfloat]
+    parse3 = [ read $ T.unpack $ words0 !! 1
+             , read $ T.unpack $ words0 !! 2
+             , read $ T.unpack $ words0 !! 3 ]
+
+    parseF = (words0 !! 1, words0 !! 2, words0 !! 3)
+
+    words0 = filter (/= "") $ T.splitOn " " line
+    headWord = case words0 of
+      []  -> Nothing
+      h:_ -> Just h
+  convertVec (vs, vts, vns, fs) = fs >>= combineParams
+   where
+    vs' = Vec.fromList vs
+    vts' = Vec.fromList vts
+    vns' = Vec.fromList vns
+    combineParams (a, b, c) =
+      combineVertex a <> combineVertex b <> combineVertex c
+    combineVertex v = join [vs' Vec.! p0, vts' Vec.! p1, vns' Vec.! p2]
+     where
+      params = T.splitOn "/" v
+      p0 = read (T.unpack $ head params) - 1
+      p1 = read (T.unpack $ params !! 1) - 1
+      p2 = read (T.unpack $ params !! 2) - 1
+  toRawModel v = V.unsafeWith v $ \vPtr -> do
+    vao <- alloca $ \vaoPtr -> do
+      glGenVertexArrays 1 vaoPtr
+      peek vaoPtr
+    glBindVertexArray vao
+
+    vbo <- alloca $ \vboPtr -> do
+      glGenBuffers 1 vboPtr
+      peek vboPtr
+    glBindBuffer GL_ARRAY_BUFFER vbo
+    glBufferData GL_ARRAY_BUFFER vSize (castPtr vPtr) GL_STATIC_DRAW
+
+    glVertexAttribPointer 0 3 GL_FLOAT GL_FALSE stride nullPtr
+    glEnableVertexAttribArray 0
+
+    glVertexAttribPointer 1 2 GL_FLOAT GL_FALSE stride
+      (nullPtr `plusPtr` (3 * sizeOf (undefined :: GLfloat)))
+    glEnableVertexAttribArray 1
+
+    glVertexAttribPointer 2 3 GL_FLOAT GL_FALSE stride
+      (nullPtr `plusPtr` (5 * sizeOf (undefined :: GLfloat)))
+    glEnableVertexAttribArray 2
+
+    glBindBuffer GL_ARRAY_BUFFER 0
+    glBindVertexArray 0
+    return RawModel { modelVao         = vao
+                    , modelVertexCount = fromIntegral $ V.length v `quot` 8
+                    }
+   where
+    vSize = fromIntegral $ sizeOf (undefined :: GLfloat) * V.length v
+    stride = fromIntegral $ sizeOf (undefined :: GLfloat) * 8
 
 loadTexture :: FilePath -> IO GLuint
 loadTexture path = do

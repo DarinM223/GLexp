@@ -11,7 +11,7 @@ import Data.Foldable (foldlM)
 import Engine.Entity
 import Foreign.C.String (withCString)
 import Foreign.Marshal.Utils (with)
-import Foreign.Ptr (castPtr, nullPtr)
+import Foreign.Ptr (castPtr)
 import Graphics.GL.Core45
 import Graphics.GL.Types
 import Linear ((!!*))
@@ -29,6 +29,7 @@ vertexShaderSrc = T.encodeUtf8
     #version 130
     in vec3 position;
     in vec2 texCoord;
+    in vec3 normal;
     out vec2 v_texCoord;
     uniform mat4 model;      // Transformation of the model
     uniform mat4 view;       // Transformation of the camera
@@ -152,10 +153,10 @@ init :: Int -> Int -> [Entity] -> IO Game
 init w h es = Game
   <$> V.unsafeThaw (V.fromList es)
   <*> mkProgram w h vertexShaderSrc fragmentShaderSrc
-  <*> pure (Linear.lookAt (Linear.V3 0 0 2) (Linear.V3 0 0 0) (Linear.V3 0 1 0))
+  <*> pure (Linear.lookAt (Linear.V3 0 0 15) (Linear.V3 0 0 0) (Linear.V3 0 1 0))
   <*> Utils.loadTexture "res/container.jpg"
   <*> Utils.loadTexture "res/awesomeface.png"
-  <*> Utils.loadVAO vertices indices
+  <*> Utils.loadObj "res/stall.obj"
 
 update :: GLfloat -> Game -> IO Game
 update _ g0 = foldlM update' g0 [0..VM.length (gameEntities g0) - 1]
@@ -164,9 +165,7 @@ update _ g0 = foldlM update' g0 [0..VM.length (gameEntities g0) - 1]
   update' !g i = do
     let
       updateEntity :: Entity -> Entity
-      updateEntity !e = e { entityPos = entityPos e + Linear.V3 0 0 0.001
-                          , entityRot = entityRot e & _i %~ (+ 0.01)
-                          }
+      updateEntity !e = e { entityRot = entityRot e & _i %~ (+ 0.01) }
     VM.modify (gameEntities g) updateEntity i
     return g
 
@@ -184,6 +183,8 @@ draw g = do
 
     let model = gameRawModel g
     glBindVertexArray $ Utils.modelVao model
-    glDrawElements
-      GL_TRIANGLES (Utils.modelVertexCount model) GL_UNSIGNED_INT nullPtr
+    glDrawArrays GL_TRIANGLES 0 (Utils.modelVertexCount model)
+    -- TODO(DarinM223): Use this when drawing with index buffer.
+    --glDrawElements
+    --  GL_TRIANGLES (Utils.modelVertexCount model) GL_UNSIGNED_INT nullPtr
     glBindVertexArray 0
