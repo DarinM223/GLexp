@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Engine.Utils
   ( RawModel (..)
+  , Texture (..)
   , errorString
   , loadShader
   , loadTexture
@@ -31,6 +32,12 @@ import qualified Data.Vector.Storable as V
 data RawModel = RawModel
   { modelVao         :: {-# UNPACK #-} !GLuint
   , modelVertexCount :: {-# UNPACK #-} !GLsizei
+  } deriving Show
+
+data Texture = Texture
+  { textureID           :: {-# UNPACK #-} !GLuint
+  , textureShineDamper  :: {-# UNPACK #-} !GLfloat
+  , textureReflectivity :: {-# UNPACK #-} !GLfloat
   } deriving Show
 
 newtype ShaderException = ShaderException String deriving Show
@@ -161,7 +168,7 @@ loadObj path = fmap
     vSize = fromIntegral $ sizeOf (undefined :: GLfloat) * V.length v
     stride = fromIntegral $ sizeOf (undefined :: GLfloat) * 8
 
-loadTexture :: FilePath -> IO GLuint
+loadTexture :: FilePath -> IO Texture
 loadTexture path = do
   Right file <- readImage path
   let ipixelrgb8 = convertRGB8 file
@@ -191,7 +198,7 @@ loadTexture path = do
       (castPtr dataPtr)
   glGenerateMipmap GL_TEXTURE_2D
   glBindTexture GL_TEXTURE_2D 0
-  return texture
+  return $ Texture texture 1.0 0.0
 
 infoLength :: Int
 infoLength = 512
