@@ -48,12 +48,12 @@ gameLoop window = do
   game0 <- Game.init w h
     [ Entity
       (Linear.V3 0 0 0)
-      (Linear.axisAngle (Linear.V3 (0.0 :: GLfloat) 0.0 1.0) (pi / 2))
+      (Linear.axisAngle (Linear.V3 (0.0 :: GLfloat) 0.0 1.0) 0)
       0.5
       0
     , Entity
       (Linear.V3 0.5 0 0)
-      (Linear.axisAngle (Linear.V3 (0.0 :: GLfloat) 0.0 1.0) (pi / 2))
+      (Linear.axisAngle (Linear.V3 (0.0 :: GLfloat) 0.0 1.0) 0)
       0.2
       0
     ]

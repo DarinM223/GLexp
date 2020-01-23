@@ -79,7 +79,8 @@ fragmentShaderSrc = T.encodeUtf8
       float brightness = max(dot(unitNormal, unitLightVec), 0.2);
       vec3 diffuse = brightness * lightColor;
 
-      color = vec4(diffuse, 1.0) * mix(texture(texture0, v_texCoord), texture(texture1, v_texCoord), 0.2);
+      color = vec4(diffuse, 1.0) * vec4(1.0, 0.0, 0.0, 0.0);
+      // color = vec4(diffuse, 1.0) * mix(texture(texture0, v_texCoord), texture(texture1, v_texCoord), 0.2);
     }
   |]
 
@@ -192,10 +193,10 @@ init w h es = Game
   <$> V.unsafeThaw (V.fromList es)
   <*> mkProgram w h vertexShaderSrc fragmentShaderSrc
   <*> pure (Linear.lookAt (Linear.V3 0 0 15) (Linear.V3 0 0 0) (Linear.V3 0 1 0))
-  <*> pure (Light (Linear.V3 0 0 (-20)) (Linear.V3 1 1 1))
+  <*> pure (Light (Linear.V3 0 0 10) (Linear.V3 1 1 1))
   <*> loadTexture "res/container.jpg"
   <*> loadTexture "res/awesomeface.png"
-  <*> loadObj "res/stall.obj"
+  <*> loadObj "res/dragon.obj"
 
 update :: GLfloat -> Game -> IO Game
 update _ g0 = foldlM update' g0 [0..VM.length (gameEntities g0) - 1]
@@ -204,7 +205,8 @@ update _ g0 = foldlM update' g0 [0..VM.length (gameEntities g0) - 1]
   update' !g i = do
     let
       updateEntity :: Entity -> Entity
-      updateEntity !e = e { entityRot = entityRot e & _i %~ (+ 0.01) }
+      updateEntity !e = e
+        { entityRot = entityRot e * Linear.axisAngle (Linear.V3 0 1 0) 0.01 }
     VM.modify (gameEntities g) updateEntity i
     return g
 
