@@ -4,7 +4,6 @@
 module Engine.Game where
 
 import Control.Exception (bracket)
-import Control.Lens ((&), (%~))
 import Control.Monad (forM_)
 import Control.Monad.Primitive (PrimState)
 import Data.ByteString (ByteString)
@@ -25,7 +24,6 @@ import Foreign.Ptr (castPtr)
 import Graphics.GL.Core45
 import Graphics.GL.Types
 import Linear ((!!*))
-import Linear.Quaternion (_i)
 import NeatInterpolation (text)
 import qualified Data.Text.Encoding as T
 import qualified Data.Vector.Storable as V
@@ -35,7 +33,7 @@ import qualified Linear
 vertexShaderSrc :: ByteString
 vertexShaderSrc = T.encodeUtf8
   [text|
-    #version 130
+    #version 330 core
     in vec3 position;
     in vec2 texCoord;
     in vec3 normal;
@@ -43,6 +41,7 @@ vertexShaderSrc = T.encodeUtf8
     out vec2 v_texCoord;
     out vec3 surfaceNormal;
     out vec3 lightVec;
+    out vec3 cameraVec;
 
     uniform mat4 model;      // Transformation of the model
     uniform mat4 view;       // Transformation of the camera
@@ -56,20 +55,23 @@ vertexShaderSrc = T.encodeUtf8
 
       surfaceNormal = (model * vec4(normal, 0.0)).xyz;
       lightVec = lightPosition - worldPosition.xyz;
+      cameraVec = (inverse(view) * vec4(0.0, 0.0, 0.0, 1.0)).xyz - worldPosition.xyz;
     }
   |]
 
 fragmentShaderSrc :: ByteString
 fragmentShaderSrc = T.encodeUtf8
   [text|
-    #version 130
+    #version 330 core
     in vec2 v_texCoord;
     in vec3 surfaceNormal;
     in vec3 lightVec;
+    in vec3 cameraVec;
 
-    uniform sampler2D texture0;
-    uniform sampler2D texture1;
+    uniform sampler2D myTexture;
     uniform vec3 lightColor;
+    uniform float shineDamper;
+    uniform float reflectivity;
 
     out vec4 color;
 
@@ -79,8 +81,13 @@ fragmentShaderSrc = T.encodeUtf8
       float brightness = max(dot(unitNormal, unitLightVec), 0.2);
       vec3 diffuse = brightness * lightColor;
 
-      color = vec4(diffuse, 1.0) * vec4(1.0, 0.0, 0.0, 0.0);
-      // color = vec4(diffuse, 1.0) * mix(texture(texture0, v_texCoord), texture(texture1, v_texCoord), 0.2);
+      vec3 unitCameraVec = normalize(cameraVec);
+      vec3 reflectedLightVec = reflect(-unitLightVec, unitNormal);
+      float specularFactor = max(dot(reflectedLightVec, unitCameraVec), 0.0);
+      float dampedFactor = pow(specularFactor, shineDamper);
+      vec3 finalSpecular = dampedFactor * lightColor;
+
+      color = vec4(diffuse, 1.0) * texture(myTexture, v_texCoord) + vec4(finalSpecular, 1.0);
     }
   |]
 
@@ -114,29 +121,27 @@ data Light = Light
   , lightColor :: {-# UNPACK #-} !(Linear.V3 GLfloat)
   }
 
--- | Program with a transformation matrix and two blended textures.
-data TwoTexProgram = TwoTexProgram
-  { pProgram       :: {-# UNPACK #-} !GLuint
-  , pTex0Loc       :: {-# UNPACK #-} !GLint
-  , pTex1Loc       :: {-# UNPACK #-} !GLint
-  , pModelLoc      :: {-# UNPACK #-} !GLint
-  , pViewLoc       :: {-# UNPACK #-} !GLint
-  , pProjLoc       :: {-# UNPACK #-} !GLint
-  , pLightPosLoc   :: {-# UNPACK #-} !GLint
-  , pLightColorLoc :: {-# UNPACK #-} !GLint
-  , pWidth         :: {-# UNPACK #-} !Int
-  , pHeight        :: {-# UNPACK #-} !Int
+data TexProgram = TexProgram
+  { pProgram         :: {-# UNPACK #-} !GLuint
+  , pTextureLoc      :: {-# UNPACK #-} !GLint
+  , pModelLoc        :: {-# UNPACK #-} !GLint
+  , pViewLoc         :: {-# UNPACK #-} !GLint
+  , pProjLoc         :: {-# UNPACK #-} !GLint
+  , pLightPosLoc     :: {-# UNPACK #-} !GLint
+  , pLightColorLoc   :: {-# UNPACK #-} !GLint
+  , pShineDamperLoc  :: {-# UNPACK #-} !GLint
+  , pReflectivityLoc :: {-# UNPACK #-} !GLint
+  , pWidth           :: {-# UNPACK #-} !Int
+  , pHeight          :: {-# UNPACK #-} !Int
   }
 
-mkProgram :: Int -> Int -> ByteString -> ByteString -> IO TwoTexProgram
+mkProgram :: Int -> Int -> ByteString -> ByteString -> IO TexProgram
 mkProgram pWidth pHeight vertexShaderSrc0 fragmentShaderSrc0 = do
   pProgram <-
     bracket loadVertexShader glDeleteShader $ \vertexShader ->
     bracket loadFragmentShader glDeleteShader $ \fragmentShader ->
       linkShaders [vertexShader, fragmentShader]
-  pTex0Loc <- withCString "texture0" $ \name ->
-    glGetUniformLocation pProgram name
-  pTex1Loc <- withCString "texture1" $ \name ->
+  pTextureLoc <- withCString "texture" $ \name ->
     glGetUniformLocation pProgram name
   pModelLoc <- withCString "model" $ \name ->
     glGetUniformLocation pProgram name
@@ -148,21 +153,21 @@ mkProgram pWidth pHeight vertexShaderSrc0 fragmentShaderSrc0 = do
     glGetUniformLocation pProgram name
   pLightColorLoc <- withCString "lightColor" $ \name ->
     glGetUniformLocation pProgram name
-  return TwoTexProgram{..}
+  pShineDamperLoc <- withCString "shineDamper" $ \name ->
+    glGetUniformLocation pProgram name
+  pReflectivityLoc <- withCString "reflectivity" $ \name ->
+    glGetUniformLocation pProgram name
+  return TexProgram{..}
  where
   loadVertexShader = loadShader GL_VERTEX_SHADER vertexShaderSrc0
   loadFragmentShader = loadShader GL_FRAGMENT_SHADER fragmentShaderSrc0
 
 programSetUniforms
-  :: TwoTexProgram -> Light -> Texture -> Texture -> Linear.M44 GLfloat -> IO ()
-programSetUniforms p light tex0 tex1 view = do
+  :: TexProgram -> Light -> Texture -> Linear.M44 GLfloat -> IO ()
+programSetUniforms p light tex view = do
   glActiveTexture GL_TEXTURE0
-  glBindTexture GL_TEXTURE_2D $ textureID tex0
-  glUniform1i (pTex0Loc p) 0
-
-  glActiveTexture GL_TEXTURE1
-  glBindTexture GL_TEXTURE_2D $ textureID tex1
-  glUniform1i (pTex1Loc p) 1
+  glBindTexture GL_TEXTURE_2D $ textureID tex
+  glUniform1i (pTextureLoc p) 0
 
   with view $ \matrixPtr ->
     glUniformMatrix4fv (pViewLoc p) 1 GL_TRUE (castPtr matrixPtr)
@@ -170,21 +175,22 @@ programSetUniforms p light tex0 tex1 view = do
     glUniformMatrix4fv (pProjLoc p) 1 GL_TRUE (castPtr matrixPtr)
   glUniform3f (pLightPosLoc p) posX posY posZ
   glUniform3f (pLightColorLoc p) cX cY cZ
+  glUniform1f (pShineDamperLoc p) (textureShineDamper tex)
+  glUniform1f (pReflectivityLoc p) (textureReflectivity tex)
  where
   Light { lightPos = Linear.V3 posX posY posZ
         , lightColor = Linear.V3 cX cY cZ } = light
 
-programSetModel :: TwoTexProgram -> Linear.M44 GLfloat -> IO ()
+programSetModel :: TexProgram -> Linear.M44 GLfloat -> IO ()
 programSetModel p model = with model $ \matrixPtr ->
   glUniformMatrix4fv (pModelLoc p) 1 GL_TRUE (castPtr matrixPtr)
 
 data Game = Game
   { gameEntities :: {-# UNPACK #-} !(IOVec Entity)
-  , gameProgram  :: {-# UNPACK #-} !TwoTexProgram
+  , gameProgram  :: {-# UNPACK #-} !TexProgram
   , gameView     :: {-# UNPACK #-} !(Linear.M44 GLfloat)
   , gameLight    :: {-# UNPACK #-} !Light
-  , gameTexture0 :: {-# UNPACK #-} !Texture
-  , gameTexture1 :: {-# UNPACK #-} !Texture
+  , gameTexture  :: {-# UNPACK #-} !Texture
   , gameRawModel :: {-# UNPACK #-} !RawModel
   }
 
@@ -194,8 +200,7 @@ init w h es = Game
   <*> mkProgram w h vertexShaderSrc fragmentShaderSrc
   <*> pure (Linear.lookAt (Linear.V3 0 0 15) (Linear.V3 0 0 0) (Linear.V3 0 1 0))
   <*> pure (Light (Linear.V3 0 0 10) (Linear.V3 1 1 1))
-  <*> loadTexture "res/container.jpg"
-  <*> loadTexture "res/awesomeface.png"
+  <*> loadTexture "res/stallTexture.png"
   <*> loadObj "res/dragon.obj"
 
 update :: GLfloat -> Game -> IO Game
@@ -214,7 +219,7 @@ draw :: Game -> IO ()
 draw g = do
   glUseProgram $ pProgram $ gameProgram g
   programSetUniforms
-    (gameProgram g) (gameLight g)(gameTexture0 g) (gameTexture1 g) (gameView g)
+    (gameProgram g) (gameLight g)(gameTexture g) (gameView g)
 
   forM_ [0..VM.length (gameEntities g) - 1] $ \i -> do
     e <- VM.read (gameEntities g) i

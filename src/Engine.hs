@@ -30,6 +30,9 @@ mkWindow :: WindowParams -> IO GLFW.Window
 mkWindow params = do
   void GLFW.init
   GLFW.defaultWindowHints
+  GLFW.windowHint $ GLFW.WindowHint'ContextVersionMinor 3
+  GLFW.windowHint $ GLFW.WindowHint'ContextVersionMajor 3
+  GLFW.windowHint $ GLFW.WindowHint'OpenGLProfile $ GLFW.OpenGLProfile'Core
   Just win <- GLFW.createWindow 640 480 "GLFW Demo" Nothing Nothing
   GLFW.makeContextCurrent (Just win)
   (x, y) <- GLFW.getFramebufferSize win
@@ -52,7 +55,7 @@ gameLoop window = do
       0.5
       0
     , Entity
-      (Linear.V3 0.5 0 0)
+      (Linear.V3 5 0 0)
       (Linear.axisAngle (Linear.V3 (0.0 :: GLfloat) 0.0 1.0) 0)
       0.2
       0
