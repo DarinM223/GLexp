@@ -85,7 +85,7 @@ fragmentShaderSrc = T.encodeUtf8
       vec3 reflectedLightVec = reflect(-unitLightVec, unitNormal);
       float specularFactor = max(dot(reflectedLightVec, unitCameraVec), 0.0);
       float dampedFactor = pow(specularFactor, shineDamper);
-      vec3 finalSpecular = dampedFactor * lightColor;
+      vec3 finalSpecular = dampedFactor * reflectivity * lightColor;
 
       color = vec4(diffuse, 1.0) * texture(myTexture, v_texCoord) + vec4(finalSpecular, 1.0);
     }
@@ -200,7 +200,9 @@ init w h es = Game
   <*> mkProgram w h vertexShaderSrc fragmentShaderSrc
   <*> pure (Linear.lookAt (Linear.V3 0 0 15) (Linear.V3 0 0 0) (Linear.V3 0 1 0))
   <*> pure (Light (Linear.V3 0 0 10) (Linear.V3 1 1 1))
-  <*> loadTexture "res/stallTexture.png"
+  <*> fmap
+    (\t -> t { textureReflectivity = 1 })
+    (loadTexture "res/stallTexture.png")
   <*> loadObj "res/dragon.obj"
 
 update :: GLfloat -> Game -> IO Game
