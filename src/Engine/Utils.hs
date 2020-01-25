@@ -19,7 +19,7 @@ import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Array (allocaArray, peekArray)
 import Foreign.Marshal.Utils (with)
 import Foreign.Ptr (castPtr, nullPtr, plusPtr)
-import Foreign.Storable (peek, sizeOf)
+import Foreign.Storable (Storable (..), peek, sizeOf)
 import Graphics.GL.Core45
 import Graphics.GL.Types
 import qualified Data.ByteString as BS
@@ -34,11 +34,42 @@ data RawModel = RawModel
   , modelVertexCount :: {-# UNPACK #-} !GLsizei
   } deriving Show
 
+instance Storable RawModel where
+  sizeOf _ = sizeOf (undefined :: GLuint) + sizeOf (undefined :: GLsizei)
+  alignment _ = alignment (undefined :: GLuint)
+  peek ptr = RawModel
+    <$> peekByteOff ptr 0
+    <*> peekByteOff ptr (sizeOf (undefined :: GLuint))
+  poke ptr m = do
+    pokeByteOff ptr 0 $ modelVao m
+    pokeByteOff ptr (sizeOf (undefined :: GLuint)) $ modelVertexCount m
+
 data Texture = Texture
   { textureID           :: {-# UNPACK #-} !GLuint
   , textureShineDamper  :: {-# UNPACK #-} !GLfloat
   , textureReflectivity :: {-# UNPACK #-} !GLfloat
   } deriving Show
+
+textureShineDamperOffset :: Int
+textureShineDamperOffset = sizeOf (undefined :: GLuint)
+
+textureReflectivityOffset :: Int
+textureReflectivityOffset =
+  textureShineDamperOffset + sizeOf (undefined :: GLfloat)
+
+instance Storable Texture where
+  sizeOf _ = sizeOf (undefined :: GLuint)
+           + sizeOf (undefined :: GLfloat)
+           + sizeOf (undefined :: GLfloat)
+  alignment _ = alignment (undefined :: GLfloat)
+  peek ptr = Texture
+    <$> peekByteOff ptr 0
+    <*> peekByteOff ptr textureShineDamperOffset
+    <*> peekByteOff ptr textureReflectivityOffset
+  poke ptr t = do
+    pokeByteOff ptr 0 $ textureID t
+    pokeByteOff ptr textureShineDamperOffset $ textureShineDamper t
+    pokeByteOff ptr textureReflectivityOffset $ textureReflectivity t
 
 newtype ShaderException = ShaderException String deriving Show
 instance Exception ShaderException

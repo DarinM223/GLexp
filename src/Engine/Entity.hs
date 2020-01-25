@@ -1,14 +1,15 @@
 module Engine.Entity (Entity (..)) where
 
+import Engine.Utils (Texture)
 import Foreign.Storable (Storable (..))
-import Graphics.GL.Types (GLfloat, GLuint)
+import Graphics.GL.Types (GLfloat)
 import Linear (Quaternion, V3)
 
 data Entity = Entity
   { entityPos   :: {-# UNPACK #-} !(V3 GLfloat)
   , entityRot   :: {-# UNPACK #-} !(Quaternion GLfloat)
   , entityScale :: {-# UNPACK #-} !GLfloat
-  , entityTex   :: {-# UNPACK #-} !GLuint
+  , entityTex   :: {-# UNPACK #-} !Texture
   } deriving Show
 
 entityRotOffset :: Int
@@ -24,7 +25,7 @@ instance Storable Entity where
   sizeOf _ = sizeOf (undefined :: V3 GLfloat)
            + sizeOf (undefined :: Quaternion GLfloat)
            + sizeOf (undefined :: GLfloat)
-           + sizeOf (undefined :: GLuint)
+           + sizeOf (undefined :: Texture)
   alignment _ = alignment (undefined :: V3 GLfloat)
   peek ptr = Entity
     <$> peekByteOff ptr 0

@@ -162,21 +162,22 @@ mkProgram pWidth pHeight vertexShaderSrc0 fragmentShaderSrc0 = do
   loadVertexShader = loadShader GL_VERTEX_SHADER vertexShaderSrc0
   loadFragmentShader = loadShader GL_FRAGMENT_SHADER fragmentShaderSrc0
 
-programSetUniforms
-  :: TexProgram -> Light -> Texture -> Linear.M44 GLfloat -> IO ()
-programSetUniforms p light tex view = do
+programSetTexture :: TexProgram -> Texture -> IO ()
+programSetTexture p tex = do
   glActiveTexture GL_TEXTURE0
   glBindTexture GL_TEXTURE_2D $ textureID tex
   glUniform1i (pTextureLoc p) 0
+  glUniform1f (pShineDamperLoc p) (textureShineDamper tex)
+  glUniform1f (pReflectivityLoc p) (textureReflectivity tex)
 
+programSetUniforms :: TexProgram -> Light -> Linear.M44 GLfloat -> IO ()
+programSetUniforms p light view = do
   with view $ \matrixPtr ->
     glUniformMatrix4fv (pViewLoc p) 1 GL_TRUE (castPtr matrixPtr)
   with (perspectiveMat (pWidth p) (pHeight p)) $ \matrixPtr ->
     glUniformMatrix4fv (pProjLoc p) 1 GL_TRUE (castPtr matrixPtr)
   glUniform3f (pLightPosLoc p) posX posY posZ
   glUniform3f (pLightColorLoc p) cX cY cZ
-  glUniform1f (pShineDamperLoc p) (textureShineDamper tex)
-  glUniform1f (pReflectivityLoc p) (textureReflectivity tex)
  where
   Light { lightPos = Linear.V3 posX posY posZ
         , lightColor = Linear.V3 cX cY cZ } = light
@@ -194,16 +195,35 @@ data Game = Game
   , gameRawModel :: {-# UNPACK #-} !RawModel
   }
 
-init :: Int -> Int -> [Entity] -> IO Game
-init w h es = Game
-  <$> V.unsafeThaw (V.fromList es)
-  <*> mkProgram w h vertexShaderSrc fragmentShaderSrc
-  <*> pure (Linear.lookAt (Linear.V3 0 0 15) (Linear.V3 0 0 0) (Linear.V3 0 1 0))
-  <*> pure (Light (Linear.V3 0 0 10) (Linear.V3 1 1 1))
-  <*> fmap
-    (\t -> t { textureReflectivity = 1 })
-    (loadTexture "res/stallTexture.png")
-  <*> loadObj "res/dragon.obj"
+init :: Int -> Int -> IO Game
+init w h = do
+  texture <- (\t -> t { textureReflectivity = 1 })
+         <$> loadTexture "res/stallTexture.png"
+  let
+    initEntities =
+      [ Entity
+        (Linear.V3 0 0 0)
+        (Linear.axisAngle (Linear.V3 (0.0 :: GLfloat) 0.0 1.0) 0)
+        0.5
+        texture
+      , Entity
+        (Linear.V3 5 0 0)
+        (Linear.axisAngle (Linear.V3 (0.0 :: GLfloat) 0.0 1.0) 0)
+        0.2
+        texture
+      ]
+  game <- Game
+    <$> V.unsafeThaw (V.fromList initEntities)
+    <*> mkProgram w h vertexShaderSrc fragmentShaderSrc
+    <*> pure camera
+    <*> pure light
+    <*> pure texture
+    <*> loadObj "res/dragon.obj"
+  V.freeze (gameEntities game) >>= print
+  return game
+ where
+  camera = Linear.lookAt (Linear.V3 0 0 15) (Linear.V3 0 0 0) (Linear.V3 0 1 0)
+  light = Light (Linear.V3 0 0 10) (Linear.V3 1 1 1)
 
 update :: GLfloat -> Game -> IO Game
 update _ g0 = foldlM update' g0 [0..VM.length (gameEntities g0) - 1]
@@ -220,11 +240,12 @@ update _ g0 = foldlM update' g0 [0..VM.length (gameEntities g0) - 1]
 draw :: Game -> IO ()
 draw g = do
   glUseProgram $ pProgram $ gameProgram g
-  programSetUniforms
-    (gameProgram g) (gameLight g)(gameTexture g) (gameView g)
+  programSetUniforms (gameProgram g) (gameLight g)(gameView g)
+  programSetTexture (gameProgram g) (gameTexture g)
 
   forM_ [0..VM.length (gameEntities g) - 1] $ \i -> do
     e <- VM.read (gameEntities g) i
+
     let rotM33 = Linear.fromQuaternion (entityRot e) !!* entityScale e
         matrix = Linear.mkTransformationMat rotM33 (entityPos e)
     programSetModel (gameProgram g) matrix

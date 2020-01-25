@@ -4,12 +4,9 @@ module Engine (start) where
 import Control.Exception (Exception, bracket, throwIO)
 import Control.Monad (void)
 import Data.Bits ((.|.))
-import Engine.Entity
 import Graphics.GL.Core45
-import Graphics.GL.Types
 import qualified Engine.Game as Game
 import qualified Graphics.UI.GLFW as GLFW
-import qualified Linear
 
 data CloseException = CloseException deriving Show
 instance Exception CloseException
@@ -32,7 +29,7 @@ mkWindow params = do
   GLFW.defaultWindowHints
   GLFW.windowHint $ GLFW.WindowHint'ContextVersionMinor 3
   GLFW.windowHint $ GLFW.WindowHint'ContextVersionMajor 3
-  GLFW.windowHint $ GLFW.WindowHint'OpenGLProfile $ GLFW.OpenGLProfile'Core
+  GLFW.windowHint $ GLFW.WindowHint'OpenGLProfile GLFW.OpenGLProfile'Core
   Just win <- GLFW.createWindow 640 480 "GLFW Demo" Nothing Nothing
   GLFW.makeContextCurrent (Just win)
   (x, y) <- GLFW.getFramebufferSize win
@@ -49,17 +46,6 @@ gameLoop :: GLFW.Window -> IO ()
 gameLoop window = do
   (w, h) <- GLFW.getFramebufferSize window
   game0 <- Game.init w h
-    [ Entity
-      (Linear.V3 0 0 0)
-      (Linear.axisAngle (Linear.V3 (0.0 :: GLfloat) 0.0 1.0) 0)
-      0.5
-      0
-    , Entity
-      (Linear.V3 5 0 0)
-      (Linear.axisAngle (Linear.V3 (0.0 :: GLfloat) 0.0 1.0) 0)
-      0.2
-      0
-    ]
   glEnable GL_DEPTH_TEST
 
   let loop !game = do
