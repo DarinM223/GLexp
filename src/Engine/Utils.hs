@@ -3,7 +3,10 @@
 module Engine.Utils
   ( RawModel (..)
   , Texture (..)
+  , Light (..)
+  , setLightUniforms
   , errorString
+  , perspectiveMat
   , loadShader
   , loadTexture
   , linkShaders
@@ -28,6 +31,20 @@ import qualified Data.Text.Lazy as T
 import qualified Data.Text.Lazy.IO as T
 import qualified Data.Vector as Vec
 import qualified Data.Vector.Storable as V
+import qualified Linear
+
+data Light = Light
+  { lightPos   :: {-# UNPACK #-} !(Linear.V3 GLfloat)
+  , lightColor :: {-# UNPACK #-} !(Linear.V3 GLfloat)
+  }
+
+setLightUniforms :: Light -> GLint -> GLint -> IO ()
+setLightUniforms light posLoc colorLoc = do
+  glUniform3f posLoc posX posY posZ
+  glUniform3f colorLoc cX cY cZ
+ where
+  Linear.V3 posX posY posZ = lightPos light
+  Linear.V3 cX cY cZ = lightColor light
 
 data RawModel = RawModel
   { modelVao         :: {-# UNPACK #-} !GLuint
@@ -76,6 +93,15 @@ instance Exception ShaderException
 
 newtype LinkException = LinkException String deriving Show
 instance Exception LinkException
+
+perspectiveMat :: Int -> Int -> Linear.M44 GLfloat
+perspectiveMat width height =
+  Linear.perspective fov aspectRatio nearPlane farPlane
+ where
+  fov = 45 * (pi / 180)
+  aspectRatio = fromIntegral width / fromIntegral height
+  nearPlane = 0.1
+  farPlane = 1000
 
 loadVAO :: V.Vector GLfloat -- ^ Positions
         -> V.Vector GLuint  -- ^ Indices

@@ -10,14 +10,6 @@ import Data.ByteString (ByteString)
 import Data.Foldable (foldlM)
 import Engine.Entity
 import Engine.Utils
-  ( RawModel (..)
-  , Texture (..)
-  , linkShaders
-  , loadObj
-  , loadShader
-  , loadTexture
-  , textureID
-  )
 import Foreign.C.String (withCString)
 import Foreign.Marshal.Utils (with)
 import Foreign.Ptr (castPtr)
@@ -28,6 +20,7 @@ import NeatInterpolation (text)
 import qualified Data.Text.Encoding as T
 import qualified Data.Vector.Storable as V
 import qualified Data.Vector.Storable.Mutable as VM
+import qualified Engine.Terrain.Terrain as Terrain
 import qualified Linear
 
 vertexShaderSrc :: ByteString
@@ -91,15 +84,6 @@ fragmentShaderSrc = T.encodeUtf8
     }
   |]
 
-perspectiveMat :: Int -> Int -> Linear.M44 GLfloat
-perspectiveMat width height =
-  Linear.perspective fov aspectRatio nearPlane farPlane
- where
-  fov = 45 * (pi / 180)
-  aspectRatio = fromIntegral width / fromIntegral height
-  nearPlane = 0.1
-  farPlane = 1000
-
 vertices :: V.Vector GLfloat
 vertices = V.fromList
   [ -1.0, 0.5, 0.0   , 0.0, 0.0
@@ -116,11 +100,6 @@ indices = V.fromList
 
 type IOVec a = V.MVector (PrimState IO) a
 
-data Light = Light
-  { lightPos   :: {-# UNPACK #-} !(Linear.V3 GLfloat)
-  , lightColor :: {-# UNPACK #-} !(Linear.V3 GLfloat)
-  }
-
 data TexProgram = TexProgram
   { pProgram         :: {-# UNPACK #-} !GLuint
   , pTextureLoc      :: {-# UNPACK #-} !GLint
@@ -131,12 +110,10 @@ data TexProgram = TexProgram
   , pLightColorLoc   :: {-# UNPACK #-} !GLint
   , pShineDamperLoc  :: {-# UNPACK #-} !GLint
   , pReflectivityLoc :: {-# UNPACK #-} !GLint
-  , pWidth           :: {-# UNPACK #-} !Int
-  , pHeight          :: {-# UNPACK #-} !Int
   }
 
-mkProgram :: Int -> Int -> ByteString -> ByteString -> IO TexProgram
-mkProgram pWidth pHeight vertexShaderSrc0 fragmentShaderSrc0 = do
+mkProgram :: ByteString -> ByteString -> IO TexProgram
+mkProgram vertexShaderSrc0 fragmentShaderSrc0 = do
   pProgram <-
     bracket loadVertexShader glDeleteShader $ \vertexShader ->
     bracket loadFragmentShader glDeleteShader $ \fragmentShader ->
@@ -170,29 +147,31 @@ programSetTexture p tex = do
   glUniform1f (pShineDamperLoc p) (textureShineDamper tex)
   glUniform1f (pReflectivityLoc p) (textureReflectivity tex)
 
-programSetUniforms :: TexProgram -> Light -> Linear.M44 GLfloat -> IO ()
-programSetUniforms p light view = do
+programSetUniforms
+  :: TexProgram -> Light -> Linear.M44 GLfloat -> Linear.M44 GLfloat -> IO ()
+programSetUniforms p light view proj = do
   with view $ \matrixPtr ->
     glUniformMatrix4fv (pViewLoc p) 1 GL_TRUE (castPtr matrixPtr)
-  with (perspectiveMat (pWidth p) (pHeight p)) $ \matrixPtr ->
+  with proj $ \matrixPtr ->
     glUniformMatrix4fv (pProjLoc p) 1 GL_TRUE (castPtr matrixPtr)
-  glUniform3f (pLightPosLoc p) posX posY posZ
-  glUniform3f (pLightColorLoc p) cX cY cZ
- where
-  Light { lightPos = Linear.V3 posX posY posZ
-        , lightColor = Linear.V3 cX cY cZ } = light
+  setLightUniforms light (pLightPosLoc p) (pLightColorLoc p)
 
 programSetModel :: TexProgram -> Linear.M44 GLfloat -> IO ()
 programSetModel p model = with model $ \matrixPtr ->
   glUniformMatrix4fv (pModelLoc p) 1 GL_TRUE (castPtr matrixPtr)
 
 data Game = Game
-  { gameEntities :: {-# UNPACK #-} !(IOVec Entity)
-  , gameProgram  :: {-# UNPACK #-} !TexProgram
-  , gameView     :: {-# UNPACK #-} !(Linear.M44 GLfloat)
-  , gameLight    :: {-# UNPACK #-} !Light
-  , gameTexture  :: {-# UNPACK #-} !Texture
-  , gameRawModel :: {-# UNPACK #-} !RawModel
+  { gameEntities       :: {-# UNPACK #-} !(IOVec Entity)
+  , gameProgram        :: {-# UNPACK #-} !TexProgram
+  , gameView           :: {-# UNPACK #-} !(Linear.M44 GLfloat)
+  , gameProj           :: {-# UNPACK #-} !(Linear.M44 GLfloat)
+  , gameLight          :: {-# UNPACK #-} !Light
+  , gameTexture        :: {-# UNPACK #-} !Texture
+  , gameRawModel       :: {-# UNPACK #-} !RawModel
+  , gameTerrainProgram :: {-# UNPACK #-} !Terrain.TerrainProgram
+  , gameTerrain1       :: {-# UNPACK #-} !Terrain.Terrain
+  , gameTerrain2       :: {-# UNPACK #-} !Terrain.Terrain
+  , gameTerrainTexture :: {-# UNPACK #-} !Texture
   }
 
 init :: Int -> Int -> IO Game
@@ -212,17 +191,21 @@ init w h = do
         0.2
         texture
       ]
-  game <- Game
+  Game
     <$> V.unsafeThaw (V.fromList initEntities)
-    <*> mkProgram w h vertexShaderSrc fragmentShaderSrc
+    <*> mkProgram vertexShaderSrc fragmentShaderSrc
     <*> pure camera
+    <*> pure proj
     <*> pure light
     <*> pure texture
     <*> loadObj "res/dragon.obj"
-  V.freeze (gameEntities game) >>= print
-  return game
+    <*> Terrain.mkProgram
+    <*> Terrain.mkTerrain 0 0
+    <*> Terrain.mkTerrain 1 0
+    <*> loadTexture "res/grass.png"
  where
   camera = Linear.lookAt (Linear.V3 0 0 15) (Linear.V3 0 0 0) (Linear.V3 0 1 0)
+  proj = perspectiveMat w h
   light = Light (Linear.V3 0 0 10) (Linear.V3 1 1 1)
 
 update :: GLfloat -> Game -> IO Game
@@ -239,8 +222,18 @@ update _ g0 = foldlM update' g0 [0..VM.length (gameEntities g0) - 1]
 
 draw :: Game -> IO ()
 draw g = do
+  glUseProgram $ Terrain.tProgram $ gameTerrainProgram g
+  Terrain.setUniforms
+    (gameTerrainProgram g)
+    (gameTerrainTexture g)
+    (gameLight g)
+    (gameView g)
+    (gameProj g)
+  Terrain.draw (gameTerrain1 g) (gameTerrainProgram g)
+  Terrain.draw (gameTerrain2 g) (gameTerrainProgram g)
+
   glUseProgram $ pProgram $ gameProgram g
-  programSetUniforms (gameProgram g) (gameLight g)(gameView g)
+  programSetUniforms (gameProgram g) (gameLight g) (gameView g) (gameProj g)
   programSetTexture (gameProgram g) (gameTexture g)
 
   forM_ [0..VM.length (gameEntities g) - 1] $ \i -> do

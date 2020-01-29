@@ -30,6 +30,7 @@ library
   exposed-modules:     Engine
                      , Engine.Entity
                      , Engine.Game
+                     , Engine.Terrain.Terrain
                      , Engine.Utils
   -- other-modules:
   -- other-extensions:
