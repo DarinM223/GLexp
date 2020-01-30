@@ -207,14 +207,17 @@ init w h = do
     <*> Terrain.mkTerrain 1 0
     <*> loadTexture "res/grass.png"
  where
-  camera = Camera (Linear.V3 0 2 15) (Linear.V3 0 (-2) (-15)) (Linear.V3 0 1 0)
+  camera = Camera (Linear.V3 0 2 15) (Linear.V3 0 0 (-1)) (Linear.V3 0 1 0)
   proj = perspectiveMat w h
   light = Light (Linear.V3 0 0 10) (Linear.V3 1 1 1)
 
-update :: S.Set (GLFW.Key) -> GLfloat -> Game -> IO Game
-update keys dt g0 = foldlM update' g0' [0..VM.length (gameEntities g0') - 1]
+update :: S.Set GLFW.Key -> MouseInfo -> GLfloat -> Game -> IO Game
+update keys mouseInfo dt g0 =
+  foldlM update' g0' [0..VM.length (gameEntities g0') - 1]
  where
-  g0' = g0 { gameCamera = updateCamera keys (5 * dt) (gameCamera g0) }
+  camera' = (gameCamera g0) { cameraFront = mouseFront mouseInfo }
+  g0' = g0 { gameCamera = updateCamera keys (5 * dt) camera' }
+
   update' :: Game -> Int -> IO Game
   update' !g i = do
     let

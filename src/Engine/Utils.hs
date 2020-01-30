@@ -8,7 +8,6 @@ module Engine.Utils
   , linkShaders
   , loadVAO
   , loadObj
-  , updateCamera
   , toViewMatrix
   ) where
 
@@ -24,30 +23,13 @@ import Foreign.Ptr (castPtr, nullPtr, plusPtr)
 import Foreign.Storable (Storable (..), peek, sizeOf)
 import Graphics.GL.Core45
 import Graphics.GL.Types
-import Linear ((^+^), (^-^), (*^))
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Unsafe as BS
-import qualified Data.Set as S
 import qualified Data.Text.Lazy as T
 import qualified Data.Text.Lazy.IO as T
 import qualified Data.Vector as Vec
 import qualified Data.Vector.Storable as V
-import qualified Graphics.UI.GLFW as GLFW
 import qualified Linear
-
-updateCamera :: S.Set GLFW.Key -> GLfloat -> Camera -> Camera
-updateCamera keys speed cam@(Camera pos front up) =
-  cam { cameraPos = pos ^+^ (speed *^ Linear.normalize vec) }
- where
-  vec = S.foldl' buildVec (Linear.V3 0 0 0) keys
-  buildVec v GLFW.Key'W = v ^+^ front
-  buildVec v GLFW.Key'S = v ^-^ front
-  buildVec v GLFW.Key'A = v ^-^ Linear.normalize (Linear.cross front up)
-  buildVec v GLFW.Key'D = v ^+^ Linear.normalize (Linear.cross front up)
-  buildVec v _          = v
-
-toViewMatrix :: Camera -> Linear.M44 GLfloat
-toViewMatrix (Camera pos front up) = Linear.lookAt pos (pos ^+^ front) up
 
 perspectiveMat :: Int -> Int -> Linear.M44 GLfloat
 perspectiveMat width height =
