@@ -9,6 +9,7 @@ import Control.Monad.Primitive (PrimState)
 import Data.ByteString (ByteString)
 import Data.Foldable (foldlM)
 import Engine.Entity
+import Engine.Types
 import Engine.Utils
 import Foreign.C.String (withCString)
 import Foreign.Marshal.Utils (with)
@@ -17,10 +18,12 @@ import Graphics.GL.Core45
 import Graphics.GL.Types
 import Linear ((!!*))
 import NeatInterpolation (text)
+import qualified Data.Set as S
 import qualified Data.Text.Encoding as T
 import qualified Data.Vector.Storable as V
 import qualified Data.Vector.Storable.Mutable as VM
 import qualified Engine.Terrain.Terrain as Terrain
+import qualified Graphics.UI.GLFW as GLFW
 import qualified Linear
 
 vertexShaderSrc :: ByteString
@@ -163,7 +166,7 @@ programSetModel p model = with model $ \matrixPtr ->
 data Game = Game
   { gameEntities       :: {-# UNPACK #-} !(IOVec Entity)
   , gameProgram        :: {-# UNPACK #-} !TexProgram
-  , gameView           :: {-# UNPACK #-} !(Linear.M44 GLfloat)
+  , gameCamera         :: {-# UNPACK #-} !Camera
   , gameProj           :: {-# UNPACK #-} !(Linear.M44 GLfloat)
   , gameLight          :: {-# UNPACK #-} !Light
   , gameTexture        :: {-# UNPACK #-} !Texture
@@ -204,13 +207,14 @@ init w h = do
     <*> Terrain.mkTerrain 1 0
     <*> loadTexture "res/grass.png"
  where
-  camera = Linear.lookAt (Linear.V3 0 0 15) (Linear.V3 0 0 0) (Linear.V3 0 1 0)
+  camera = Camera (Linear.V3 0 2 15) (Linear.V3 0 (-2) (-15)) (Linear.V3 0 1 0)
   proj = perspectiveMat w h
   light = Light (Linear.V3 0 0 10) (Linear.V3 1 1 1)
 
-update :: GLfloat -> Game -> IO Game
-update _ g0 = foldlM update' g0 [0..VM.length (gameEntities g0) - 1]
+update :: S.Set (GLFW.Key) -> GLfloat -> Game -> IO Game
+update keys dt g0 = foldlM update' g0' [0..VM.length (gameEntities g0') - 1]
  where
+  g0' = g0 { gameCamera = updateCamera keys (5 * dt) (gameCamera g0) }
   update' :: Game -> Int -> IO Game
   update' !g i = do
     let
@@ -222,18 +226,20 @@ update _ g0 = foldlM update' g0 [0..VM.length (gameEntities g0) - 1]
 
 draw :: Game -> IO ()
 draw g = do
+  let view = toViewMatrix $ gameCamera g
+
   glUseProgram $ Terrain.tProgram $ gameTerrainProgram g
   Terrain.setUniforms
     (gameTerrainProgram g)
     (gameTerrainTexture g)
     (gameLight g)
-    (gameView g)
+    view
     (gameProj g)
   Terrain.draw (gameTerrain1 g) (gameTerrainProgram g)
   Terrain.draw (gameTerrain2 g) (gameTerrainProgram g)
 
   glUseProgram $ pProgram $ gameProgram g
-  programSetUniforms (gameProgram g) (gameLight g) (gameView g) (gameProj g)
+  programSetUniforms (gameProgram g) (gameLight g) view (gameProj g)
   programSetTexture (gameProgram g) (gameTexture g)
 
   forM_ [0..VM.length (gameEntities g) - 1] $ \i -> do

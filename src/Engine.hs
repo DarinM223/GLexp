@@ -4,7 +4,9 @@ module Engine (start) where
 import Control.Exception (Exception, bracket, throwIO)
 import Control.Monad (void)
 import Data.Bits ((.|.))
+import Data.IORef (IORef, modifyIORef, newIORef, readIORef)
 import Graphics.GL.Core45
+import qualified Data.Set as S
 import qualified Engine.Game as Game
 import qualified Graphics.UI.GLFW as GLFW
 
@@ -16,9 +18,13 @@ data WindowParams = WindowParams
   , windowMouseCallback :: !GLFW.MouseButtonCallback
   }
 
-keyPressed :: GLFW.KeyCallback
-keyPressed _ GLFW.Key'Escape _ GLFW.KeyState'Pressed _ = throwIO CloseException
-keyPressed _ _ _ _ _ = return ()
+keyPressed :: IORef (S.Set GLFW.Key) -> GLFW.KeyCallback
+keyPressed _ _ GLFW.Key'Escape _ GLFW.KeyState'Pressed _ =
+  throwIO CloseException
+keyPressed ref _ key _ keyState _ = case keyState of
+  GLFW.KeyState'Pressed  -> modifyIORef ref (S.insert key)
+  GLFW.KeyState'Released -> modifyIORef ref (S.delete key)
+  _                      -> return ()
 
 mousePressed :: GLFW.MouseButtonCallback
 mousePressed _ _ _ _ = return ()
@@ -42,25 +48,29 @@ mkWindow params = do
 freeWindow :: GLFW.Window -> IO ()
 freeWindow window = GLFW.destroyWindow window >> GLFW.terminate
 
-gameLoop :: GLFW.Window -> IO ()
-gameLoop window = do
+gameLoop :: IORef (S.Set GLFW.Key) -> GLFW.Window -> IO ()
+gameLoop keysRef window = do
   (w, h) <- GLFW.getFramebufferSize window
   game0 <- Game.init w h
   glEnable GL_DEPTH_TEST
 
-  let loop !game = do
+  let loop !game !lastTime = do
         GLFW.pollEvents
-        Just time <- GLFW.getTime
-        game' <- Game.update (realToFrac time) game
+        Just time <- fmap realToFrac <$> GLFW.getTime
+        let dt = time - lastTime
+        keys <- readIORef keysRef
+        game' <- Game.update keys dt game
 
         glClearColor 0.0 0.0 1.0 1.0
         glClear $ GL_COLOR_BUFFER_BIT .|. GL_DEPTH_BUFFER_BIT
         Game.draw game'
 
         GLFW.swapBuffers window
-        loop game'
-  loop game0
+        loop game' time
+  loop game0 0.0
 
 start :: IO ()
-start =
-  bracket (mkWindow (WindowParams keyPressed mousePressed)) freeWindow gameLoop
+start = do
+  ref <- newIORef S.empty
+  let createWindow = mkWindow $ WindowParams (keyPressed ref) mousePressed
+  bracket createWindow freeWindow (gameLoop ref)

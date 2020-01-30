@@ -1,23 +1,22 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Engine.Utils
-  ( RawModel (..)
-  , Texture (..)
-  , Light (..)
-  , setLightUniforms
-  , errorString
+  ( errorString
   , perspectiveMat
   , loadShader
   , loadTexture
   , linkShaders
   , loadVAO
   , loadObj
+  , updateCamera
+  , toViewMatrix
   ) where
 
 import Codec.Picture
-import Control.Exception (Exception, throwIO)
+import Control.Exception (throwIO)
 import Control.Monad (join, when)
 import Data.Foldable (traverse_)
+import Engine.Types
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Array (allocaArray, peekArray)
 import Foreign.Marshal.Utils (with)
@@ -25,74 +24,30 @@ import Foreign.Ptr (castPtr, nullPtr, plusPtr)
 import Foreign.Storable (Storable (..), peek, sizeOf)
 import Graphics.GL.Core45
 import Graphics.GL.Types
+import Linear ((^+^), (^-^), (*^))
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Unsafe as BS
+import qualified Data.Set as S
 import qualified Data.Text.Lazy as T
 import qualified Data.Text.Lazy.IO as T
 import qualified Data.Vector as Vec
 import qualified Data.Vector.Storable as V
+import qualified Graphics.UI.GLFW as GLFW
 import qualified Linear
 
-data Light = Light
-  { lightPos   :: {-# UNPACK #-} !(Linear.V3 GLfloat)
-  , lightColor :: {-# UNPACK #-} !(Linear.V3 GLfloat)
-  }
-
-setLightUniforms :: Light -> GLint -> GLint -> IO ()
-setLightUniforms light posLoc colorLoc = do
-  glUniform3f posLoc posX posY posZ
-  glUniform3f colorLoc cX cY cZ
+updateCamera :: S.Set GLFW.Key -> GLfloat -> Camera -> Camera
+updateCamera keys speed cam@(Camera pos front up) =
+  cam { cameraPos = pos ^+^ (speed *^ Linear.normalize vec) }
  where
-  Linear.V3 posX posY posZ = lightPos light
-  Linear.V3 cX cY cZ = lightColor light
+  vec = S.foldl' buildVec (Linear.V3 0 0 0) keys
+  buildVec v GLFW.Key'W = v ^+^ front
+  buildVec v GLFW.Key'S = v ^-^ front
+  buildVec v GLFW.Key'A = v ^-^ Linear.normalize (Linear.cross front up)
+  buildVec v GLFW.Key'D = v ^+^ Linear.normalize (Linear.cross front up)
+  buildVec v _          = v
 
-data RawModel = RawModel
-  { modelVao         :: {-# UNPACK #-} !GLuint
-  , modelVertexCount :: {-# UNPACK #-} !GLsizei
-  } deriving Show
-
-instance Storable RawModel where
-  sizeOf _ = sizeOf (undefined :: GLuint) + sizeOf (undefined :: GLsizei)
-  alignment _ = alignment (undefined :: GLuint)
-  peek ptr = RawModel
-    <$> peekByteOff ptr 0
-    <*> peekByteOff ptr (sizeOf (undefined :: GLuint))
-  poke ptr m = do
-    pokeByteOff ptr 0 $ modelVao m
-    pokeByteOff ptr (sizeOf (undefined :: GLuint)) $ modelVertexCount m
-
-data Texture = Texture
-  { textureID           :: {-# UNPACK #-} !GLuint
-  , textureShineDamper  :: {-# UNPACK #-} !GLfloat
-  , textureReflectivity :: {-# UNPACK #-} !GLfloat
-  } deriving Show
-
-textureShineDamperOffset :: Int
-textureShineDamperOffset = sizeOf (undefined :: GLuint)
-
-textureReflectivityOffset :: Int
-textureReflectivityOffset =
-  textureShineDamperOffset + sizeOf (undefined :: GLfloat)
-
-instance Storable Texture where
-  sizeOf _ = sizeOf (undefined :: GLuint)
-           + sizeOf (undefined :: GLfloat)
-           + sizeOf (undefined :: GLfloat)
-  alignment _ = alignment (undefined :: GLfloat)
-  peek ptr = Texture
-    <$> peekByteOff ptr 0
-    <*> peekByteOff ptr textureShineDamperOffset
-    <*> peekByteOff ptr textureReflectivityOffset
-  poke ptr t = do
-    pokeByteOff ptr 0 $ textureID t
-    pokeByteOff ptr textureShineDamperOffset $ textureShineDamper t
-    pokeByteOff ptr textureReflectivityOffset $ textureReflectivity t
-
-newtype ShaderException = ShaderException String deriving Show
-instance Exception ShaderException
-
-newtype LinkException = LinkException String deriving Show
-instance Exception LinkException
+toViewMatrix :: Camera -> Linear.M44 GLfloat
+toViewMatrix (Camera pos front up) = Linear.lookAt pos (pos ^+^ front) up
 
 perspectiveMat :: Int -> Int -> Linear.M44 GLfloat
 perspectiveMat width height =

@@ -1,6 +1,6 @@
 module Engine.Entity (Entity (..)) where
 
-import Engine.Utils (Texture)
+import Engine.Types (Texture)
 import Foreign.Storable (Storable (..))
 import Graphics.GL.Types (GLfloat)
 import Linear (Quaternion, V3)

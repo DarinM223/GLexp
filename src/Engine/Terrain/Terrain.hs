@@ -11,7 +11,8 @@ module Engine.Terrain.Terrain
 
 import Control.Exception (bracket)
 import Data.ByteString (ByteString)
-import Engine.Utils
+import Engine.Types (Light, RawModel (..), Texture (..), setLightUniforms)
+import Engine.Utils (linkShaders, loadShader)
 import Foreign.C.String (withCString)
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Utils (with)
@@ -45,7 +46,7 @@ vertexShaderSrc = T.encodeUtf8
     void main() {
       vec4 worldPosition = model * vec4(position, 1.0);
       gl_Position = projection * view * worldPosition;
-      v_texCoord = texCoord;
+      v_texCoord = texCoord * 40.0;
 
       surfaceNormal = (model * vec4(normal, 0.0)).xyz;
       lightVec = lightPosition - worldPosition.xyz;

@@ -31,11 +31,13 @@ library
                      , Engine.Entity
                      , Engine.Game
                      , Engine.Terrain.Terrain
+                     , Engine.Types
                      , Engine.Utils
   -- other-modules:
   -- other-extensions:
   build-depends:       base ^>=4.13.0.0
                      , bytestring
+                     , containers
                      , gl
                      , GLFW-b
                      , JuicyPixels
