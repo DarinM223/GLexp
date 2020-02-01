@@ -43,13 +43,19 @@ vertexShaderSrc = T.encodeUtf8
     uniform mat4 view;       // Transformation of the camera
     uniform mat4 projection; // Clipping coordinates outside FOV
     uniform vec3 lightPosition;
+    uniform float useFakeLighting;
 
     void main() {
       vec4 worldPosition = model * vec4(position, 1.0);
       gl_Position = projection * view * worldPosition;
       v_texCoord = texCoord;
 
-      surfaceNormal = (model * vec4(normal, 0.0)).xyz;
+      vec3 actualNormal = normal;
+      if (useFakeLighting > 0.5) {
+        actualNormal = vec3(0.0, 1.0, 0.0);
+      }
+
+      surfaceNormal = (model * vec4(actualNormal, 0.0)).xyz;
       lightVec = lightPosition - worldPosition.xyz;
       cameraVec = (inverse(view) * vec4(0.0, 0.0, 0.0, 1.0)).xyz - worldPosition.xyz;
     }
@@ -83,7 +89,12 @@ fragmentShaderSrc = T.encodeUtf8
       float dampedFactor = pow(specularFactor, shineDamper);
       vec3 finalSpecular = dampedFactor * reflectivity * lightColor;
 
-      color = vec4(diffuse, 1.0) * texture(myTexture, v_texCoord) + vec4(finalSpecular, 1.0);
+      vec4 textureColor = texture(myTexture, v_texCoord);
+      if (textureColor.a < 0.5) {
+        discard;
+      }
+
+      color = vec4(diffuse, 1.0) * textureColor + vec4(finalSpecular, 1.0);
     }
   |]
 
@@ -113,6 +124,7 @@ data TexProgram = TexProgram
   , pLightColorLoc   :: {-# UNPACK #-} !GLint
   , pShineDamperLoc  :: {-# UNPACK #-} !GLint
   , pReflectivityLoc :: {-# UNPACK #-} !GLint
+  , pFakeLightingLoc :: {-# UNPACK #-} !GLint
   }
 
 mkProgram :: ByteString -> ByteString -> IO TexProgram
@@ -137,6 +149,8 @@ mkProgram vertexShaderSrc0 fragmentShaderSrc0 = do
     glGetUniformLocation pProgram name
   pReflectivityLoc <- withCString "reflectivity" $ \name ->
     glGetUniformLocation pProgram name
+  pFakeLightingLoc <- withCString "useFakeLighting" $ \name ->
+    glGetUniformLocation pProgram name
   return TexProgram{..}
  where
   loadVertexShader = loadShader GL_VERTEX_SHADER vertexShaderSrc0
@@ -144,11 +158,15 @@ mkProgram vertexShaderSrc0 fragmentShaderSrc0 = do
 
 programSetTexture :: TexProgram -> Texture -> IO ()
 programSetTexture p tex = do
+  if textureTransparent tex /= 0
+    then glDisable GL_CULL_FACE
+    else glEnable GL_CULL_FACE >> glCullFace GL_BACK
   glActiveTexture GL_TEXTURE0
   glBindTexture GL_TEXTURE_2D $ textureID tex
   glUniform1i (pTextureLoc p) 0
   glUniform1f (pShineDamperLoc p) (textureShineDamper tex)
   glUniform1f (pReflectivityLoc p) (textureReflectivity tex)
+  glUniform1f (pFakeLightingLoc p) (textureUseFakeLighting tex)
 
 programSetUniforms
   :: TexProgram -> Light -> Linear.M44 GLfloat -> Linear.M44 GLfloat -> IO ()
@@ -165,6 +183,7 @@ programSetModel p model = with model $ \matrixPtr ->
 
 data Game = Game
   { gameEntities       :: {-# UNPACK #-} !(IOVec Entity)
+  , gameGrasses        :: {-# UNPACK #-} !(IOVec Entity)
   , gameProgram        :: {-# UNPACK #-} !TexProgram
   , gameCamera         :: {-# UNPACK #-} !Camera
   , gameProj           :: {-# UNPACK #-} !(Linear.M44 GLfloat)
@@ -181,35 +200,51 @@ init :: Int -> Int -> IO Game
 init w h = do
   texture <- (\t -> t { textureReflectivity = 1 })
          <$> loadTexture "res/stallTexture.png"
+  model <- loadObj "res/dragon.obj"
+  grassTexture <- (\t -> t { textureTransparent     = 1
+                           , textureUseFakeLighting = 1 })
+              <$> loadTexture "res/grassTexture.png"
+  grassModel <- loadObj "res/grassModel.obj"
   let
     initEntities =
       [ Entity
-        (Linear.V3 0 0 0)
+        (Linear.V3 10 0 10)
         (Linear.axisAngle (Linear.V3 (0.0 :: GLfloat) 0.0 1.0) 0)
         0.5
         texture
+        model
       , Entity
-        (Linear.V3 5 0 0)
+        (Linear.V3 15 0 10)
         (Linear.axisAngle (Linear.V3 (0.0 :: GLfloat) 0.0 1.0) 0)
         0.2
         texture
+        model
+      ]
+    grassEntities =
+      [ Entity
+        (Linear.V3 20 0 10)
+        (Linear.axisAngle (Linear.V3 (0.0 :: GLfloat) 0.0 1.0) 0)
+        1.0
+        grassTexture
+        grassModel
       ]
   Game
     <$> V.unsafeThaw (V.fromList initEntities)
+    <*> V.unsafeThaw (V.fromList grassEntities)
     <*> mkProgram vertexShaderSrc fragmentShaderSrc
     <*> pure camera
     <*> pure proj
     <*> pure light
     <*> pure texture
-    <*> loadObj "res/dragon.obj"
+    <*> pure model
     <*> Terrain.mkProgram
     <*> Terrain.mkTerrain 0 0
     <*> Terrain.mkTerrain 1 0
     <*> loadTexture "res/grass.png"
  where
-  camera = Camera (Linear.V3 0 2 15) (Linear.V3 0 0 (-1)) (Linear.V3 0 1 0)
+  camera = Camera (Linear.V3 10 2 30) (Linear.V3 0 0 (-1)) (Linear.V3 0 1 0)
   proj = perspectiveMat w h
-  light = Light (Linear.V3 0 0 10) (Linear.V3 1 1 1)
+  light = Light (Linear.V3 0 0 30) (Linear.V3 1 1 1)
 
 update :: S.Set GLFW.Key -> MouseInfo -> GLfloat -> Game -> IO Game
 update keys mouseInfo dt g0 =
@@ -257,4 +292,13 @@ draw g = do
     -- TODO(DarinM223): Use this when drawing with index buffer.
     --glDrawElements
     --  GL_TRIANGLES (Utils.modelVertexCount model) GL_UNSIGNED_INT nullPtr
+    glBindVertexArray 0
+  e0 <- VM.read (gameGrasses g) 0
+  programSetTexture (gameProgram g) (entityTex e0)
+  forM_ [0..VM.length (gameGrasses g) - 1] $ \i -> do
+    e <- VM.read (gameGrasses g) i
+    programSetModel
+      (gameProgram g) (Linear.mkTransformationMat Linear.identity (entityPos e))
+    glBindVertexArray $ modelVao $ entityModel e
+    glDrawArrays GL_TRIANGLES 0 $ modelVertexCount $ entityModel e
     glBindVertexArray 0

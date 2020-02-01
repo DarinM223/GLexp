@@ -83,9 +83,11 @@ instance Storable RawModel where
     pokeByteOff ptr (sizeOf (undefined :: GLuint)) $ modelVertexCount m
 
 data Texture = Texture
-  { textureID           :: {-# UNPACK #-} !GLuint
-  , textureShineDamper  :: {-# UNPACK #-} !GLfloat
-  , textureReflectivity :: {-# UNPACK #-} !GLfloat
+  { textureID              :: {-# UNPACK #-} !GLuint
+  , textureShineDamper     :: {-# UNPACK #-} !GLfloat
+  , textureReflectivity    :: {-# UNPACK #-} !GLfloat
+  , textureTransparent     :: {-# UNPACK #-} !GLboolean
+  , textureUseFakeLighting :: {-# UNPACK #-} !GLfloat
   } deriving Show
 
 textureShineDamperOffset :: Int
@@ -95,19 +97,33 @@ textureReflectivityOffset :: Int
 textureReflectivityOffset =
   textureShineDamperOffset + sizeOf (undefined :: GLfloat)
 
+textureTransparentOffset :: Int
+textureTransparentOffset =
+  textureReflectivityOffset + sizeOf (undefined :: GLfloat)
+
+textureUseFakeLightingOffset :: Int
+textureUseFakeLightingOffset =
+  textureTransparentOffset + sizeOf (undefined :: GLboolean)
+
 instance Storable Texture where
   sizeOf _ = sizeOf (undefined :: GLuint)
            + sizeOf (undefined :: GLfloat)
+           + sizeOf (undefined :: GLfloat)
+           + sizeOf (undefined :: GLboolean)
            + sizeOf (undefined :: GLfloat)
   alignment _ = alignment (undefined :: GLfloat)
   peek ptr = Texture
     <$> peekByteOff ptr 0
     <*> peekByteOff ptr textureShineDamperOffset
     <*> peekByteOff ptr textureReflectivityOffset
+    <*> peekByteOff ptr textureTransparentOffset
+    <*> peekByteOff ptr textureUseFakeLightingOffset
   poke ptr t = do
     pokeByteOff ptr 0 $ textureID t
     pokeByteOff ptr textureShineDamperOffset $ textureShineDamper t
     pokeByteOff ptr textureReflectivityOffset $ textureReflectivity t
+    pokeByteOff ptr textureTransparentOffset $ textureTransparent t
+    pokeByteOff ptr textureUseFakeLightingOffset $ textureUseFakeLighting t
 
 newtype ShaderException = ShaderException String deriving Show
 instance Exception ShaderException

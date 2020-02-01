@@ -165,7 +165,7 @@ loadObj path = fmap
 loadTexture :: FilePath -> IO Texture
 loadTexture path = do
   Right file <- readImage path
-  let ipixelrgb8 = convertRGB8 file
+  let ipixelrgb8 = convertRGBA8 file
       iWidth     = fromIntegral $ imageWidth ipixelrgb8
       iHeight    = fromIntegral $ imageHeight ipixelrgb8
       iData      = imageData ipixelrgb8
@@ -183,16 +183,16 @@ loadTexture path = do
     glTexImage2D
       GL_TEXTURE_2D
       0
-      GL_RGB
+      GL_RGBA
       iWidth
       iHeight
       0
-      GL_RGB
+      GL_RGBA
       GL_UNSIGNED_BYTE
       (castPtr dataPtr)
   glGenerateMipmap GL_TEXTURE_2D
   glBindTexture GL_TEXTURE_2D 0
-  return $ Texture texture 1.0 0.0
+  return $ Texture texture 1.0 0.0 0 0
 
 infoLength :: Int
 infoLength = 512
