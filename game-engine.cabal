@@ -28,7 +28,6 @@ common opts
 library
   import:              opts
   exposed-modules:     Engine
-                     , Engine.Entity
                      , Engine.Game
                      , Engine.Terrain.Terrain
                      , Engine.Types
@@ -38,6 +37,7 @@ library
   build-depends:       base ^>=4.13.0.0
                      , bytestring
                      , containers
+                     , derive-storable-th
                      , gl
                      , GLFW-b
                      , JuicyPixels

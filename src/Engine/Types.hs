@@ -1,8 +1,9 @@
+{-# LANGUAGE TemplateHaskell #-}
 module Engine.Types where
 
 import Control.Exception (Exception)
 import Data.Fixed (mod')
-import Foreign.Storable (Storable (..), peek, sizeOf)
+import Foreign.Storable.TH (deriveStorable)
 import Graphics.GL.Core45
 import Graphics.GL.Types
 import Linear ((^+^), (^-^), (*^))
@@ -71,16 +72,7 @@ data RawModel = RawModel
   { modelVao         :: {-# UNPACK #-} !GLuint
   , modelVertexCount :: {-# UNPACK #-} !GLsizei
   } deriving Show
-
-instance Storable RawModel where
-  sizeOf _ = sizeOf (undefined :: GLuint) + sizeOf (undefined :: GLsizei)
-  alignment _ = alignment (undefined :: GLuint)
-  peek ptr = RawModel
-    <$> peekByteOff ptr 0
-    <*> peekByteOff ptr (sizeOf (undefined :: GLuint))
-  poke ptr m = do
-    pokeByteOff ptr 0 $ modelVao m
-    pokeByteOff ptr (sizeOf (undefined :: GLuint)) $ modelVertexCount m
+$(deriveStorable ''RawModel)
 
 data Texture = Texture
   { textureID              :: {-# UNPACK #-} !GLuint
@@ -89,41 +81,16 @@ data Texture = Texture
   , textureTransparent     :: {-# UNPACK #-} !GLboolean
   , textureUseFakeLighting :: {-# UNPACK #-} !GLfloat
   } deriving Show
+$(deriveStorable ''Texture)
 
-textureShineDamperOffset :: Int
-textureShineDamperOffset = sizeOf (undefined :: GLuint)
-
-textureReflectivityOffset :: Int
-textureReflectivityOffset =
-  textureShineDamperOffset + sizeOf (undefined :: GLfloat)
-
-textureTransparentOffset :: Int
-textureTransparentOffset =
-  textureReflectivityOffset + sizeOf (undefined :: GLfloat)
-
-textureUseFakeLightingOffset :: Int
-textureUseFakeLightingOffset =
-  textureTransparentOffset + sizeOf (undefined :: GLboolean)
-
-instance Storable Texture where
-  sizeOf _ = sizeOf (undefined :: GLuint)
-           + sizeOf (undefined :: GLfloat)
-           + sizeOf (undefined :: GLfloat)
-           + sizeOf (undefined :: GLboolean)
-           + sizeOf (undefined :: GLfloat)
-  alignment _ = alignment (undefined :: GLfloat)
-  peek ptr = Texture
-    <$> peekByteOff ptr 0
-    <*> peekByteOff ptr textureShineDamperOffset
-    <*> peekByteOff ptr textureReflectivityOffset
-    <*> peekByteOff ptr textureTransparentOffset
-    <*> peekByteOff ptr textureUseFakeLightingOffset
-  poke ptr t = do
-    pokeByteOff ptr 0 $ textureID t
-    pokeByteOff ptr textureShineDamperOffset $ textureShineDamper t
-    pokeByteOff ptr textureReflectivityOffset $ textureReflectivity t
-    pokeByteOff ptr textureTransparentOffset $ textureTransparent t
-    pokeByteOff ptr textureUseFakeLightingOffset $ textureUseFakeLighting t
+data Entity = Entity
+  { entityPos   :: {-# UNPACK #-} !(Linear.V3 GLfloat)
+  , entityRot   :: {-# UNPACK #-} !(Linear.Quaternion GLfloat)
+  , entityScale :: {-# UNPACK #-} !GLfloat
+  , entityTex   :: {-# UNPACK #-} !Texture
+  , entityModel :: {-# UNPACK #-} !RawModel
+  } deriving Show
+$(deriveStorable ''Entity)
 
 newtype ShaderException = ShaderException String deriving Show
 instance Exception ShaderException

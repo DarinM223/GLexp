@@ -8,7 +8,6 @@ import Control.Monad (forM_)
 import Control.Monad.Primitive (PrimState)
 import Data.ByteString (ByteString)
 import Data.Foldable (foldlM)
-import Engine.Entity
 import Engine.Types
 import Engine.Utils
 import Foreign.C.String (withCString)
