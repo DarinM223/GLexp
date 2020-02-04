@@ -3,7 +3,6 @@ module Engine (start) where
 
 import Control.Exception (Exception, bracket, throwIO)
 import Control.Monad (void)
-import Data.Bits ((.|.))
 import Data.IORef (IORef, modifyIORef, newIORef, readIORef)
 import Engine.Types (MouseInfo (..), updateMouseInfo)
 import Graphics.GL.Core45
@@ -71,8 +70,6 @@ gameLoop keysRef mouseInfoRef window = do
         mouseInfo <- readIORef mouseInfoRef
         game' <- Game.update keys mouseInfo dt game
 
-        glClearColor 0.0 0.0 1.0 1.0
-        glClear $ GL_COLOR_BUFFER_BIT .|. GL_DEPTH_BUFFER_BIT
         Game.draw game'
 
         GLFW.swapBuffers window

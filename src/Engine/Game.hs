@@ -6,6 +6,7 @@ module Engine.Game where
 import Control.Exception (bracket)
 import Control.Monad (forM_)
 import Control.Monad.Primitive (PrimState)
+import Data.Bits ((.|.))
 import Data.ByteString (ByteString)
 import Data.Foldable (foldlM)
 import Engine.Types
@@ -37,6 +38,7 @@ vertexShaderSrc = T.encodeUtf8
     out vec3 surfaceNormal;
     out vec3 lightVec;
     out vec3 cameraVec;
+    out float visibility;
 
     uniform mat4 model;      // Transformation of the model
     uniform mat4 view;       // Transformation of the camera
@@ -44,9 +46,13 @@ vertexShaderSrc = T.encodeUtf8
     uniform vec3 lightPosition;
     uniform float useFakeLighting;
 
+    const float density = 0.007;
+    const float gradient = 1.5;
+
     void main() {
       vec4 worldPosition = model * vec4(position, 1.0);
-      gl_Position = projection * view * worldPosition;
+      vec4 positionRelativeToCam = view * worldPosition;
+      gl_Position = projection * positionRelativeToCam;
       v_texCoord = texCoord;
 
       vec3 actualNormal = normal;
@@ -57,6 +63,9 @@ vertexShaderSrc = T.encodeUtf8
       surfaceNormal = (model * vec4(actualNormal, 0.0)).xyz;
       lightVec = lightPosition - worldPosition.xyz;
       cameraVec = (inverse(view) * vec4(0.0, 0.0, 0.0, 1.0)).xyz - worldPosition.xyz;
+
+      float distance = length(positionRelativeToCam.xyz);
+      visibility = clamp(exp(-pow(distance * density, gradient)), 0.0, 1.0);
     }
   |]
 
@@ -68,11 +77,13 @@ fragmentShaderSrc = T.encodeUtf8
     in vec3 surfaceNormal;
     in vec3 lightVec;
     in vec3 cameraVec;
+    in float visibility;
 
     uniform sampler2D myTexture;
     uniform vec3 lightColor;
     uniform float shineDamper;
     uniform float reflectivity;
+    uniform vec3 skyColor;
 
     out vec4 color;
 
@@ -94,6 +105,7 @@ fragmentShaderSrc = T.encodeUtf8
       }
 
       color = vec4(diffuse, 1.0) * textureColor + vec4(finalSpecular, 1.0);
+      color = mix(vec4(skyColor, 1.0), color, visibility);
     }
   |]
 
@@ -124,6 +136,7 @@ data TexProgram = TexProgram
   , pShineDamperLoc  :: {-# UNPACK #-} !GLint
   , pReflectivityLoc :: {-# UNPACK #-} !GLint
   , pFakeLightingLoc :: {-# UNPACK #-} !GLint
+  , pSkyColorLoc     :: {-# UNPACK #-} !GLint
   }
 
 mkProgram :: ByteString -> ByteString -> IO TexProgram
@@ -150,6 +163,8 @@ mkProgram vertexShaderSrc0 fragmentShaderSrc0 = do
     glGetUniformLocation pProgram name
   pFakeLightingLoc <- withCString "useFakeLighting" $ \name ->
     glGetUniformLocation pProgram name
+  pSkyColorLoc <- withCString "skyColor" $ \name ->
+    glGetUniformLocation pProgram name
   return TexProgram{..}
  where
   loadVertexShader = loadShader GL_VERTEX_SHADER vertexShaderSrc0
@@ -168,13 +183,20 @@ programSetTexture p tex = do
   glUniform1f (pFakeLightingLoc p) (textureUseFakeLighting tex)
 
 programSetUniforms
-  :: TexProgram -> Light -> Linear.M44 GLfloat -> Linear.M44 GLfloat -> IO ()
-programSetUniforms p light view proj = do
+  :: TexProgram
+  -> Light
+  -> Linear.V3 GLfloat
+  -> Linear.M44 GLfloat
+  -> Linear.M44 GLfloat
+  -> IO ()
+programSetUniforms p light skyColor view proj = do
   with view $ \matrixPtr ->
     glUniformMatrix4fv (pViewLoc p) 1 GL_TRUE (castPtr matrixPtr)
   with proj $ \matrixPtr ->
     glUniformMatrix4fv (pProjLoc p) 1 GL_TRUE (castPtr matrixPtr)
   setLightUniforms light (pLightPosLoc p) (pLightColorLoc p)
+  glUniform3f (pSkyColorLoc p) r g b
+ where Linear.V3 r g b = skyColor
 
 programSetModel :: TexProgram -> Linear.M44 GLfloat -> IO ()
 programSetModel p model = with model $ \matrixPtr ->
@@ -193,6 +215,7 @@ data Game = Game
   , gameTerrain1       :: {-# UNPACK #-} !Terrain.Terrain
   , gameTerrain2       :: {-# UNPACK #-} !Terrain.Terrain
   , gameTerrainTexture :: {-# UNPACK #-} !Texture
+  , gameSkyColor       :: {-# UNPACK #-} !(Linear.V3 GLfloat)
   }
 
 init :: Int -> Int -> IO Game
@@ -240,6 +263,7 @@ init w h = do
     <*> Terrain.mkTerrain 0 0
     <*> Terrain.mkTerrain 1 0
     <*> loadTexture "res/grass.png"
+    <*> pure (Linear.V3 0.5 0.5 0.5)
  where
   camera = Camera (Linear.V3 10 2 30) (Linear.V3 0 0 (-1)) (Linear.V3 0 1 0)
   proj = perspectiveMat w h
@@ -265,18 +289,25 @@ draw :: Game -> IO ()
 draw g = do
   let view = toViewMatrix $ gameCamera g
 
+  case gameSkyColor g of
+    Linear.V3 red green blue -> do
+      glClearColor red green blue 1.0
+      glClear $ GL_COLOR_BUFFER_BIT .|. GL_DEPTH_BUFFER_BIT
+
   glUseProgram $ Terrain.tProgram $ gameTerrainProgram g
   Terrain.setUniforms
     (gameTerrainProgram g)
     (gameTerrainTexture g)
     (gameLight g)
+    (gameSkyColor g)
     view
     (gameProj g)
   Terrain.draw (gameTerrain1 g) (gameTerrainProgram g)
   Terrain.draw (gameTerrain2 g) (gameTerrainProgram g)
 
   glUseProgram $ pProgram $ gameProgram g
-  programSetUniforms (gameProgram g) (gameLight g) view (gameProj g)
+  programSetUniforms
+    (gameProgram g) (gameLight g) (gameSkyColor g) view (gameProj g)
   programSetTexture (gameProgram g) (gameTexture g)
 
   forM_ [0..VM.length (gameEntities g) - 1] $ \i -> do

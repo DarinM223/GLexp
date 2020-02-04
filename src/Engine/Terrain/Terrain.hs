@@ -37,20 +37,28 @@ vertexShaderSrc = T.encodeUtf8
     out vec3 surfaceNormal;
     out vec3 lightVec;
     out vec3 cameraVec;
+    out float visibility;
 
     uniform mat4 model;      // Transformation of the model
     uniform mat4 view;       // Transformation of the camera
     uniform mat4 projection; // Clipping coordinates outside FOV
     uniform vec3 lightPosition;
 
+    const float density = 0.007;
+    const float gradient = 1.5;
+
     void main() {
       vec4 worldPosition = model * vec4(position, 1.0);
-      gl_Position = projection * view * worldPosition;
+      vec4 positionRelativeToCam = view * worldPosition;
+      gl_Position = projection * positionRelativeToCam;
       v_texCoord = texCoord * 40.0;
 
       surfaceNormal = (model * vec4(normal, 0.0)).xyz;
       lightVec = lightPosition - worldPosition.xyz;
       cameraVec = (inverse(view) * vec4(0.0, 0.0, 0.0, 1.0)).xyz - worldPosition.xyz;
+
+      float distance = length(positionRelativeToCam.xyz);
+      visibility = clamp(exp(-pow(distance * density, gradient)), 0.0, 1.0);
     }
   |]
 
@@ -62,11 +70,13 @@ fragmentShaderSrc = T.encodeUtf8
     in vec3 surfaceNormal;
     in vec3 lightVec;
     in vec3 cameraVec;
+    in float visibility;
 
     uniform sampler2D myTexture;
     uniform vec3 lightColor;
     uniform float shineDamper;
     uniform float reflectivity;
+    uniform vec3 skyColor;
 
     out vec4 color;
 
@@ -83,6 +93,7 @@ fragmentShaderSrc = T.encodeUtf8
       vec3 finalSpecular = dampedFactor * reflectivity * lightColor;
 
       color = vec4(diffuse, 1.0) * texture(myTexture, v_texCoord) + vec4(finalSpecular, 1.0);
+      color = mix(vec4(skyColor, 1.0), color, visibility);
     }
   |]
 
@@ -172,6 +183,7 @@ data TerrainProgram = TerrainProgram
   , tLightColorLoc   :: {-# UNPACK #-} !GLint
   , tShineDamperLoc  :: {-# UNPACK #-} !GLint
   , tReflectivityLoc :: {-# UNPACK #-} !GLint
+  , tSkyColorLoc     :: {-# UNPACK #-} !GLint
   }
 
 mkProgram :: IO TerrainProgram
@@ -196,6 +208,8 @@ mkProgram = do
     glGetUniformLocation tProgram name
   tReflectivityLoc <- withCString "reflectivity" $ \name ->
     glGetUniformLocation tProgram name
+  tSkyColorLoc <- withCString "skyColor" $ \name ->
+    glGetUniformLocation tProgram name
   return TerrainProgram{..}
  where
   loadVertexShader = loadShader GL_VERTEX_SHADER vertexShaderSrc
@@ -205,10 +219,11 @@ setUniforms
   :: TerrainProgram
   -> Texture
   -> Light
+  -> Linear.V3 GLfloat
   -> Linear.M44 GLfloat
   -> Linear.M44 GLfloat
   -> IO ()
-setUniforms p tex light view proj = do
+setUniforms p tex light skyColor view proj = do
   glActiveTexture GL_TEXTURE0
   glBindTexture GL_TEXTURE_2D $ textureID tex
   glUniform1i (tTextureLoc p) 0
@@ -220,6 +235,8 @@ setUniforms p tex light view proj = do
   with proj $ \matrixPtr ->
     glUniformMatrix4fv (tProjLoc p) 1 GL_TRUE (castPtr matrixPtr)
   setLightUniforms light (tLightPosLoc p) (tLightColorLoc p)
+  glUniform3f (tSkyColorLoc p) r g b
+ where Linear.V3 r g b = skyColor
 
 draw :: Terrain -> TerrainProgram -> IO ()
 draw t p = do
