@@ -11,7 +11,8 @@ module Engine.Terrain.Terrain
 
 import Control.Exception (bracket)
 import Data.ByteString (ByteString)
-import Engine.Types (Light, RawModel (..), Texture (..), setLightUniforms)
+import Engine.Types
+  (Light, RawModel (..), Texture (..), TexturePack (..), setLightUniforms)
 import Engine.Utils (linkShaders, loadShader)
 import Foreign.C.String (withCString)
 import Foreign.Marshal.Alloc (alloca)
@@ -51,7 +52,7 @@ vertexShaderSrc = T.encodeUtf8
       vec4 worldPosition = model * vec4(position, 1.0);
       vec4 positionRelativeToCam = view * worldPosition;
       gl_Position = projection * positionRelativeToCam;
-      v_texCoord = texCoord * 40.0;
+      v_texCoord = texCoord;
 
       surfaceNormal = (model * vec4(normal, 0.0)).xyz;
       lightVec = lightPosition - worldPosition.xyz;
@@ -72,7 +73,12 @@ fragmentShaderSrc = T.encodeUtf8
     in vec3 cameraVec;
     in float visibility;
 
-    uniform sampler2D myTexture;
+    uniform sampler2D backgroundTexture;
+    uniform sampler2D rTexture;
+    uniform sampler2D gTexture;
+    uniform sampler2D bTexture;
+    uniform sampler2D blendMap;
+
     uniform vec3 lightColor;
     uniform float shineDamper;
     uniform float reflectivity;
@@ -81,6 +87,15 @@ fragmentShaderSrc = T.encodeUtf8
     out vec4 color;
 
     void main() {
+      vec4 blendMapColor = texture(blendMap, v_texCoord);
+      float backTextureAmount = 1 - (blendMapColor.r + blendMapColor.g + blendMapColor.b);
+      vec2 tiledCoords = v_texCoord * 40.0;
+      vec4 backgroundTextureColor = texture(backgroundTexture, tiledCoords) * backTextureAmount;
+      vec4 rTextureColor = texture(rTexture, tiledCoords) * blendMapColor.r;
+      vec4 gTextureColor = texture(gTexture, tiledCoords) * blendMapColor.g;
+      vec4 bTextureColor = texture(bTexture, tiledCoords) * blendMapColor.b;
+      vec4 totalColor = backgroundTextureColor + rTextureColor + gTextureColor + bTextureColor;
+
       vec3 unitNormal = normalize(surfaceNormal);
       vec3 unitLightVec = normalize(lightVec);
       float brightness = max(dot(unitNormal, unitLightVec), 0.2);
@@ -92,7 +107,7 @@ fragmentShaderSrc = T.encodeUtf8
       float dampedFactor = pow(specularFactor, shineDamper);
       vec3 finalSpecular = dampedFactor * reflectivity * lightColor;
 
-      color = vec4(diffuse, 1.0) * texture(myTexture, v_texCoord) + vec4(finalSpecular, 1.0);
+      color = vec4(diffuse, 1.0) * totalColor + vec4(finalSpecular, 1.0);
       color = mix(vec4(skyColor, 1.0), color, visibility);
     }
   |]
@@ -106,11 +121,14 @@ terrainVertexCount = 128
 data Terrain = Terrain
   { terrainX        :: {-# UNPACK #-} !GLfloat
   , terrainZ        :: {-# UNPACK #-} !GLfloat
+  , terrainPack     :: {-# UNPACK #-} !TexturePack
+  , terrainBlendMap :: {-# UNPACK #-} !Texture
   , terrainRawModel :: {-# UNPACK #-} !RawModel
   }
 
-mkTerrain :: GLfloat -> GLfloat -> IO Terrain
-mkTerrain x z = Terrain (x * terrainSize) (z * terrainSize) <$> generateTerrain
+mkTerrain :: GLfloat -> GLfloat -> TexturePack -> Texture -> IO Terrain
+mkTerrain x z p t =
+  Terrain (x * terrainSize) (z * terrainSize) p t <$> generateTerrain
 
 generateTerrain :: IO RawModel
 generateTerrain = V.unsafeWith buffer $ \vPtr ->
@@ -175,7 +193,11 @@ generateTerrain = V.unsafeWith buffer $ \vPtr ->
 
 data TerrainProgram = TerrainProgram
   { tProgram         :: {-# UNPACK #-} !GLuint
-  , tTextureLoc      :: {-# UNPACK #-} !GLint
+  , tBackTextureLoc  :: {-# UNPACK #-} !GLint
+  , tRTextureLoc     :: {-# UNPACK #-} !GLint
+  , tGTextureLoc     :: {-# UNPACK #-} !GLint
+  , tBTextureLoc     :: {-# UNPACK #-} !GLint
+  , tBlendMapLoc     :: {-# UNPACK #-} !GLint
   , tModelLoc        :: {-# UNPACK #-} !GLint
   , tViewLoc         :: {-# UNPACK #-} !GLint
   , tProjLoc         :: {-# UNPACK #-} !GLint
@@ -192,8 +214,18 @@ mkProgram = do
     bracket loadVertexShader glDeleteShader $ \vertexShader ->
     bracket loadFragmentShader glDeleteShader $ \fragmentShader ->
       linkShaders [vertexShader, fragmentShader]
-  tTextureLoc <- withCString "texture" $ \name ->
+
+  tBackTextureLoc <- withCString "backgroundTexture" $ \name ->
     glGetUniformLocation tProgram name
+  tRTextureLoc <- withCString "rTexture" $ \name ->
+    glGetUniformLocation tProgram name
+  tGTextureLoc <- withCString "gTexture" $ \name ->
+    glGetUniformLocation tProgram name
+  tBTextureLoc <- withCString "bTexture" $ \name ->
+    glGetUniformLocation tProgram name
+  tBlendMapLoc <- withCString "blendMap" $ \name ->
+    glGetUniformLocation tProgram name
+
   tModelLoc <- withCString "model" $ \name ->
     glGetUniformLocation tProgram name
   tViewLoc <- withCString "view" $ \name ->
@@ -216,19 +248,36 @@ mkProgram = do
   loadFragmentShader = loadShader GL_FRAGMENT_SHADER fragmentShaderSrc
 
 setUniforms
-  :: TerrainProgram
-  -> Texture
+  :: Terrain
+  -> TerrainProgram
   -> Light
   -> Linear.V3 GLfloat
   -> Linear.M44 GLfloat
   -> Linear.M44 GLfloat
   -> IO ()
-setUniforms p tex light skyColor view proj = do
+setUniforms t p light skyColor view proj = do
   glActiveTexture GL_TEXTURE0
-  glBindTexture GL_TEXTURE_2D $ textureID tex
-  glUniform1i (tTextureLoc p) 0
-  glUniform1f (tShineDamperLoc p) (textureShineDamper tex)
-  glUniform1f (tReflectivityLoc p) (textureReflectivity tex)
+  glBindTexture GL_TEXTURE_2D $ textureID packBackground
+  glUniform1i (tBackTextureLoc p) 0
+
+  glActiveTexture GL_TEXTURE1
+  glBindTexture GL_TEXTURE_2D $ textureID packR
+  glUniform1i (tRTextureLoc p) 1
+
+  glActiveTexture GL_TEXTURE2
+  glBindTexture GL_TEXTURE_2D $ textureID packG
+  glUniform1i (tGTextureLoc p) 2
+
+  glActiveTexture GL_TEXTURE3
+  glBindTexture GL_TEXTURE_2D $ textureID packB
+  glUniform1i (tBTextureLoc p) 3
+
+  glActiveTexture GL_TEXTURE4
+  glBindTexture GL_TEXTURE_2D $ textureID $ terrainBlendMap t
+  glUniform1i (tBlendMapLoc p) 4
+
+  glUniform1f (tShineDamperLoc p) $ textureShineDamper packBackground
+  glUniform1f (tReflectivityLoc p) $ textureReflectivity packBackground
 
   with view $ \matrixPtr ->
     glUniformMatrix4fv (tViewLoc p) 1 GL_TRUE (castPtr matrixPtr)
@@ -236,7 +285,9 @@ setUniforms p tex light skyColor view proj = do
     glUniformMatrix4fv (tProjLoc p) 1 GL_TRUE (castPtr matrixPtr)
   setLightUniforms light (tLightPosLoc p) (tLightColorLoc p)
   glUniform3f (tSkyColorLoc p) r g b
- where Linear.V3 r g b = skyColor
+ where
+  TexturePack{..} = terrainPack t
+  Linear.V3 r g b = skyColor
 
 draw :: Terrain -> TerrainProgram -> IO ()
 draw t p = do

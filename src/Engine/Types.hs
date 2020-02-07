@@ -92,6 +92,13 @@ data Entity = Entity
   } deriving Show
 $(deriveStorable ''Entity)
 
+data TexturePack = TexturePack
+  { packBackground :: {-# UNPACK #-} !Texture
+  , packR          :: {-# UNPACK #-} !Texture
+  , packG          :: {-# UNPACK #-} !Texture
+  , packB          :: {-# UNPACK #-} !Texture
+  }
+
 newtype ShaderException = ShaderException String deriving Show
 instance Exception ShaderException
 

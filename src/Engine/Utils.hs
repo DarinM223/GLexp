@@ -5,6 +5,7 @@ module Engine.Utils
   , perspectiveMat
   , loadShader
   , loadTexture
+  , loadTexturePack
   , linkShaders
   , loadVAO
   , loadObj
@@ -193,6 +194,11 @@ loadTexture path = do
   glGenerateMipmap GL_TEXTURE_2D
   glBindTexture GL_TEXTURE_2D 0
   return $ Texture texture 1.0 0.0 0 0
+
+loadTexturePack
+  :: FilePath -> FilePath -> FilePath -> FilePath -> IO TexturePack
+loadTexturePack back r g b = TexturePack
+  <$> loadTexture back <*> loadTexture r <*> loadTexture g <*> loadTexture b
 
 infoLength :: Int
 infoLength = 512

@@ -250,6 +250,9 @@ init w h = do
         grassTexture
         grassModel
       ]
+  pack <- loadTexturePack
+    "res/grass.png" "res/mud.png" "res/grassFlowers.png" "res/path.png"
+  blendMap <- loadTexture "res/blendMap.png"
   Game
     <$> V.unsafeThaw (V.fromList initEntities)
     <*> V.unsafeThaw (V.fromList grassEntities)
@@ -260,8 +263,8 @@ init w h = do
     <*> pure texture
     <*> pure model
     <*> Terrain.mkProgram
-    <*> Terrain.mkTerrain 0 0
-    <*> Terrain.mkTerrain 1 0
+    <*> Terrain.mkTerrain 0 0 pack blendMap
+    <*> Terrain.mkTerrain 1 0 pack blendMap
     <*> loadTexture "res/grass.png"
     <*> pure (Linear.V3 0.5 0.5 0.5)
  where
@@ -274,7 +277,7 @@ update keys mouseInfo dt g0 =
   foldlM update' g0' [0..VM.length (gameEntities g0') - 1]
  where
   camera' = (gameCamera g0) { cameraFront = mouseFront mouseInfo }
-  g0' = g0 { gameCamera = updateCamera keys (5 * dt) camera' }
+  g0' = g0 { gameCamera = updateCamera keys (30 * dt) camera' }
 
   update' :: Game -> Int -> IO Game
   update' !g i = do
@@ -296,8 +299,8 @@ draw g = do
 
   glUseProgram $ Terrain.tProgram $ gameTerrainProgram g
   Terrain.setUniforms
+    (gameTerrain1 g)
     (gameTerrainProgram g)
-    (gameTerrainTexture g)
     (gameLight g)
     (gameSkyColor g)
     view
