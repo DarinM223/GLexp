@@ -214,7 +214,6 @@ data Game = Game
   , gameTerrainProgram :: {-# UNPACK #-} !Terrain.TerrainProgram
   , gameTerrain1       :: {-# UNPACK #-} !Terrain.Terrain
   , gameTerrain2       :: {-# UNPACK #-} !Terrain.Terrain
-  , gameTerrainTexture :: {-# UNPACK #-} !Texture
   , gameSkyColor       :: {-# UNPACK #-} !(Linear.V3 GLfloat)
   }
 
@@ -265,7 +264,6 @@ init w h = do
     <*> Terrain.mkProgram
     <*> Terrain.mkTerrain 0 0 pack blendMap
     <*> Terrain.mkTerrain 1 0 pack blendMap
-    <*> loadTexture "res/grass.png"
     <*> pure (Linear.V3 0.5 0.5 0.5)
  where
   camera = Camera (Linear.V3 10 2 30) (Linear.V3 0 0 (-1)) (Linear.V3 0 1 0)
