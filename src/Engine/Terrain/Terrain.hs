@@ -9,7 +9,9 @@ module Engine.Terrain.Terrain
   , draw
   ) where
 
+import Codec.Picture
 import Control.Exception (bracket)
+import Data.Bits (shiftL, (.|.))
 import Data.ByteString (ByteString)
 import Engine.Types
   (Light, RawModel (..), Texture (..), TexturePack (..), setLightUniforms)
@@ -115,8 +117,11 @@ fragmentShaderSrc = T.encodeUtf8
 terrainSize :: GLfloat
 terrainSize = 800
 
-terrainVertexCount :: GLint
-terrainVertexCount = 128
+terrainMaxHeight :: GLfloat
+terrainMaxHeight = 40
+
+terrainMaxPixelColor :: GLfloat
+terrainMaxPixelColor = 256 * 256 * 256
 
 data Terrain = Terrain
   { terrainX        :: {-# UNPACK #-} !GLfloat
@@ -126,13 +131,15 @@ data Terrain = Terrain
   , terrainRawModel :: {-# UNPACK #-} !RawModel
   }
 
-mkTerrain :: GLfloat -> GLfloat -> TexturePack -> Texture -> IO Terrain
-mkTerrain x z p t =
-  Terrain (x * terrainSize) (z * terrainSize) p t <$> generateTerrain
+mkTerrain
+  :: GLfloat -> GLfloat -> TexturePack -> Texture -> FilePath -> IO Terrain
+mkTerrain x z p t heightMapPath = do
+  Right heightMap <- fmap convertRGB8 <$> readImage heightMapPath
+  Terrain (x * terrainSize) (z * terrainSize) p t <$> generateTerrain heightMap
 
-generateTerrain :: IO RawModel
-generateTerrain = V.unsafeWith buffer $ \vPtr ->
-                  V.unsafeWith indices $ \ePtr -> do
+generateTerrain :: Image PixelRGB8 -> IO RawModel
+generateTerrain heightMap = V.unsafeWith buffer $ \vPtr ->
+                            V.unsafeWith indices $ \ePtr -> do
   vao <- alloca $ \vaoPtr -> do
     glGenVertexArrays 1 vaoPtr
     peek vaoPtr
@@ -170,6 +177,7 @@ generateTerrain = V.unsafeWith buffer $ \vPtr ->
   vSize = fromIntegral $ sizeOf (undefined :: GLfloat) * V.length buffer
   eSize = fromIntegral $ sizeOf (undefined :: GLuint) * V.length indices
   stride = fromIntegral $ sizeOf (undefined :: GLfloat) * 8
+  terrainVertexCount = imageHeight heightMap
 
   buffer :: V.Vector GLfloat
   buffer = V.fromList $ do
@@ -179,7 +187,11 @@ generateTerrain = V.unsafeWith buffer $ \vPtr ->
         texCoordZ = fromIntegral i / fromIntegral (terrainVertexCount - 1)
         vertX     = texCoordX * terrainSize
         vertZ     = texCoordZ * terrainSize
-    [vertX, 0, vertZ, texCoordX, texCoordZ, 0, 1, 0]
+    let Linear.V3 nx ny nz = calcNormal j i heightMap in
+      [ vertX, calcHeight j i heightMap - 80, vertZ
+      , texCoordX, texCoordZ
+      , nx, ny, nz
+      ]
 
   indices :: V.Vector GLuint
   indices = V.fromList . fmap fromIntegral $ do
@@ -190,6 +202,33 @@ generateTerrain = V.unsafeWith buffer $ \vPtr ->
         bottomLeft  = (z + 1) * terrainVertexCount + x
         bottomRight = bottomLeft + 1
     [topLeft, bottomLeft, topRight, topRight, bottomLeft, bottomRight]
+
+  calcHeight :: Int -> Int -> Image PixelRGB8 -> GLfloat
+  calcHeight x z image
+    | x < 0 || x >= h || z < 0 || z >= h = 0
+    | otherwise                          =
+      ((pixelToFloat (pixelAt image x z) + v) / v) * terrainMaxHeight
+   where
+    h = imageHeight image
+    v = terrainMaxPixelColor / 2
+
+  calcNormal :: Int -> Int -> Image PixelRGB8 -> Linear.V3 GLfloat
+  calcNormal x z image =
+    Linear.normalize $ Linear.V3 (heightL - heightR) 2 (heightD - heightU)
+   where
+    heightL = calcHeight (x - 1) z image
+    heightR = calcHeight (x + 1) z image
+    heightD = calcHeight x (z - 1) image
+    heightU = calcHeight x (z + 1) image
+
+pixelToFloat :: PixelRGB8 -> GLfloat
+pixelToFloat = fromIntegral . pixelToInt
+
+pixelToInt :: PixelRGB8 -> Int
+pixelToInt (PixelRGB8 r g b)
+  =   shiftL (fromIntegral b) 0
+  .|. shiftL (fromIntegral g) 8
+  .|. shiftL (fromIntegral r) 16
 
 data TerrainProgram = TerrainProgram
   { tProgram         :: {-# UNPACK #-} !GLuint

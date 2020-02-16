@@ -262,8 +262,8 @@ init w h = do
     <*> pure texture
     <*> pure model
     <*> Terrain.mkProgram
-    <*> Terrain.mkTerrain 0 0 pack blendMap
-    <*> Terrain.mkTerrain 1 0 pack blendMap
+    <*> Terrain.mkTerrain 0 0 pack blendMap "res/heightmap.png"
+    <*> Terrain.mkTerrain 1 0 pack blendMap "res/heightmap.png"
     <*> pure (Linear.V3 0.5 0.5 0.5)
  where
   camera = Camera (Linear.V3 10 2 30) (Linear.V3 0 0 (-1)) (Linear.V3 0 1 0)
