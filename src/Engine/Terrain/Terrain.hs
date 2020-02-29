@@ -5,6 +5,7 @@ module Engine.Terrain.Terrain
   , TerrainProgram (..)
   , mkTerrain
   , mkProgram
+  , heightAt
   , setUniforms
   , draw
   ) where
@@ -13,6 +14,7 @@ import Codec.Picture
 import Control.Exception (bracket)
 import Data.Bits (shiftL, (.|.))
 import Data.ByteString (ByteString)
+import Data.Fixed (mod')
 import Engine.Types
   (Light, RawModel (..), Texture (..), TexturePack (..), setLightUniforms)
 import Engine.Utils (linkShaders, loadShader)
@@ -123,11 +125,17 @@ terrainMaxHeight = 40
 terrainMaxPixelColor :: GLfloat
 terrainMaxPixelColor = 256 * 256 * 256
 
+data TerrainHeights = TerrainHeights
+  { heightsData        :: {-# UNPACK #-} !(V.Vector GLfloat)
+  , heightsVertexCount :: {-# UNPACK #-} !Int
+  }
+
 data Terrain = Terrain
   { terrainX        :: {-# UNPACK #-} !GLfloat
   , terrainZ        :: {-# UNPACK #-} !GLfloat
   , terrainPack     :: {-# UNPACK #-} !TexturePack
   , terrainBlendMap :: {-# UNPACK #-} !Texture
+  , terrainHeights  :: {-# UNPACK #-} !TerrainHeights
   , terrainRawModel :: {-# UNPACK #-} !RawModel
   }
 
@@ -135,7 +143,13 @@ mkTerrain
   :: GLfloat -> GLfloat -> TexturePack -> Texture -> FilePath -> IO Terrain
 mkTerrain x z p t heightMapPath = do
   Right heightMap <- fmap convertRGB8 <$> readImage heightMapPath
-  Terrain (x * terrainSize) (z * terrainSize) p t <$> generateTerrain heightMap
+  let vertexCount = imageHeight heightMap
+      heights     = V.fromList $ do
+        j <- [0..vertexCount - 1]
+        i <- [0..vertexCount - 1]
+        return $ calcHeight j i heightMap
+  Terrain (x * terrainSize)(z * terrainSize) p t
+    (TerrainHeights heights vertexCount) <$> generateTerrain heightMap
 
 generateTerrain :: Image PixelRGB8 -> IO RawModel
 generateTerrain heightMap = V.unsafeWith buffer $ \vPtr ->
@@ -188,7 +202,7 @@ generateTerrain heightMap = V.unsafeWith buffer $ \vPtr ->
         vertX     = texCoordX * terrainSize
         vertZ     = texCoordZ * terrainSize
     let Linear.V3 nx ny nz = calcNormal j i heightMap in
-      [ vertX, calcHeight j i heightMap - 80, vertZ
+      [ vertX, calcHeight j i heightMap, vertZ
       , texCoordX, texCoordZ
       , nx, ny, nz
       ]
@@ -203,23 +217,23 @@ generateTerrain heightMap = V.unsafeWith buffer $ \vPtr ->
         bottomRight = bottomLeft + 1
     [topLeft, bottomLeft, topRight, topRight, bottomLeft, bottomRight]
 
-  calcHeight :: Int -> Int -> Image PixelRGB8 -> GLfloat
-  calcHeight x z image
-    | x < 0 || x >= h || z < 0 || z >= h = 0
-    | otherwise                          =
-      ((pixelToFloat (pixelAt image x z) + v) / v) * terrainMaxHeight
-   where
-    h = imageHeight image
-    v = terrainMaxPixelColor / 2
+calcHeight :: Int -> Int -> Image PixelRGB8 -> GLfloat
+calcHeight x z image
+  | x < 0 || x >= h || z < 0 || z >= h = 0
+  | otherwise                          =
+    ((pixelToFloat (pixelAt image x z) + v) / v) * terrainMaxHeight - 80
+ where
+  h = imageHeight image
+  v = terrainMaxPixelColor / 2
 
-  calcNormal :: Int -> Int -> Image PixelRGB8 -> Linear.V3 GLfloat
-  calcNormal x z image =
-    Linear.normalize $ Linear.V3 (heightL - heightR) 2 (heightD - heightU)
-   where
-    heightL = calcHeight (x - 1) z image
-    heightR = calcHeight (x + 1) z image
-    heightD = calcHeight x (z - 1) image
-    heightU = calcHeight x (z + 1) image
+calcNormal :: Int -> Int -> Image PixelRGB8 -> Linear.V3 GLfloat
+calcNormal x z image =
+  Linear.normalize $ Linear.V3 (heightL - heightR) 2 (heightD - heightU)
+ where
+  heightL = calcHeight (x - 1) z image
+  heightR = calcHeight (x + 1) z image
+  heightD = calcHeight x (z - 1) image
+  heightU = calcHeight x (z + 1) image
 
 pixelToFloat :: PixelRGB8 -> GLfloat
 pixelToFloat = fromIntegral . pixelToInt
@@ -229,6 +243,50 @@ pixelToInt (PixelRGB8 r g b)
   =   shiftL (fromIntegral b) 0
   .|. shiftL (fromIntegral g) 8
   .|. shiftL (fromIntegral r) 16
+
+heightAt :: GLfloat -> GLfloat -> Terrain -> GLfloat
+heightAt x z t
+  | gridX < 0 || gridX >= lastIdx ||
+    gridZ < 0 || gridZ >= lastIdx = 0
+  | xCoord < 1 - zCoord = barycentric
+    (Linear.V3 0 (heightAtIdx gridX gridZ t) 0)
+    (Linear.V3 1 (heightAtIdx (gridX + 1) gridZ t) 0)
+    (Linear.V3 0 (heightAtIdx gridX (gridZ + 1) t) 1)
+    (Linear.V2 xCoord zCoord)
+  | otherwise = barycentric
+    (Linear.V3 1 (heightAtIdx (gridX + 1) gridZ t) 0)
+    (Linear.V3 1 (heightAtIdx (gridX + 1) (gridZ + 1) t) 1)
+    (Linear.V3 0 (heightAtIdx gridX (gridZ + 1) t) 1)
+    (Linear.V2 xCoord zCoord)
+ where
+  tx = x - terrainX t
+  tz = z - terrainZ t
+  lastIdx = heightsVertexCount (terrainHeights t) - 1
+  gridSquareSize = terrainSize / fromIntegral lastIdx
+  gridX = floor (tx / gridSquareSize)
+  gridZ = floor (tz / gridSquareSize)
+  xCoord = (tx `mod'` gridSquareSize) / gridSquareSize
+  zCoord = (tz `mod'` gridSquareSize) / gridSquareSize
+
+heightAtIdx :: Int -> Int -> Terrain -> GLfloat
+heightAtIdx x z t = heightsData h V.! ((x * heightsVertexCount h) + z)
+ where h = terrainHeights t
+
+barycentric
+  :: Linear.V3 GLfloat
+  -> Linear.V3 GLfloat
+  -> Linear.V3 GLfloat
+  -> Linear.V2 GLfloat
+  -> GLfloat
+barycentric (Linear.V3 p1x p1y p1z)
+            (Linear.V3 p2x p2y p2z)
+            (Linear.V3 p3x p3y p3z)
+            (Linear.V2 posx posy) = l1 * p1y + l2 * p2y + l3 * p3y
+ where
+  det = (p2z - p3z) * (p1x - p3x) + (p3x - p2x) * (p1z - p3z)
+  l1 = ((p2z - p3z) * (posx - p3x) + (p3x - p2x) * (posy - p3z)) / det
+  l2 = ((p3z - p1z) * (posx - p3x) + (p1x - p3x) * (posy - p3z)) / det
+  l3 = 1.0 - l1 - l2
 
 data TerrainProgram = TerrainProgram
   { tProgram         :: {-# UNPACK #-} !GLuint

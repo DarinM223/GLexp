@@ -275,7 +275,14 @@ update keys mouseInfo dt g0 =
   foldlM update' g0' [0..VM.length (gameEntities g0') - 1]
  where
   camera' = (gameCamera g0) { cameraFront = mouseFront mouseInfo }
-  g0' = g0 { gameCamera = updateCamera keys (30 * dt) camera' }
+  camera'' = updateCamera keys (30 * dt) camera'
+
+  -- Clamps camera y value to the terrain height.
+  Linear.V3 cx _ cz = cameraPos camera''
+  terrainHeight = Terrain.heightAt cx cz (gameTerrain1 g0) + 1
+  camera''' = camera'' { cameraPos = Linear.V3 cx terrainHeight cz }
+
+  g0' = g0 { gameCamera = camera''' }
 
   update' :: Game -> Int -> IO Game
   update' !g i = do
