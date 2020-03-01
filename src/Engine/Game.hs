@@ -45,6 +45,8 @@ vertexShaderSrc = T.encodeUtf8
     uniform mat4 projection; // Clipping coordinates outside FOV
     uniform vec3 lightPosition;
     uniform float useFakeLighting;
+    uniform float numberOfRows;
+    uniform vec2 offset;
 
     const float density = 0.007;
     const float gradient = 1.5;
@@ -53,7 +55,7 @@ vertexShaderSrc = T.encodeUtf8
       vec4 worldPosition = model * vec4(position, 1.0);
       vec4 positionRelativeToCam = view * worldPosition;
       gl_Position = projection * positionRelativeToCam;
-      v_texCoord = texCoord;
+      v_texCoord = texCoord / numberOfRows + offset;
 
       vec3 actualNormal = normal;
       if (useFakeLighting > 0.5) {
@@ -137,6 +139,8 @@ data TexProgram = TexProgram
   , pReflectivityLoc :: {-# UNPACK #-} !GLint
   , pFakeLightingLoc :: {-# UNPACK #-} !GLint
   , pSkyColorLoc     :: {-# UNPACK #-} !GLint
+  , pNumberOfRows    :: {-# UNPACK #-} !GLint
+  , pOffset          :: {-# UNPACK #-} !GLint
   }
 
 mkProgram :: ByteString -> ByteString -> IO TexProgram
@@ -165,6 +169,10 @@ mkProgram vertexShaderSrc0 fragmentShaderSrc0 = do
     glGetUniformLocation pProgram name
   pSkyColorLoc <- withCString "skyColor" $ \name ->
     glGetUniformLocation pProgram name
+  pNumberOfRows <- withCString "numberOfRows" $ \name ->
+    glGetUniformLocation pProgram name
+  pOffset <- withCString "offset" $ \name ->
+    glGetUniformLocation pProgram name
   return TexProgram{..}
  where
   loadVertexShader = loadShader GL_VERTEX_SHADER vertexShaderSrc0
@@ -181,6 +189,7 @@ programSetTexture p tex = do
   glUniform1f (pShineDamperLoc p) (textureShineDamper tex)
   glUniform1f (pReflectivityLoc p) (textureReflectivity tex)
   glUniform1f (pFakeLightingLoc p) (textureUseFakeLighting tex)
+  glUniform1f (pNumberOfRows p) $ fromIntegral $ textureNumRows tex
 
 programSetUniforms
   :: TexProgram
@@ -198,6 +207,9 @@ programSetUniforms p light skyColor view proj = do
   glUniform3f (pSkyColorLoc p) r g b
  where Linear.V3 r g b = skyColor
 
+programSetOffset :: TexProgram -> GLfloat -> GLfloat -> IO ()
+programSetOffset p = glUniform2f (pOffset p)
+
 programSetModel :: TexProgram -> Linear.M44 GLfloat -> IO ()
 programSetModel p model = with model $ \matrixPtr ->
   glUniformMatrix4fv (pModelLoc p) 1 GL_TRUE (castPtr matrixPtr)
@@ -205,6 +217,7 @@ programSetModel p model = with model $ \matrixPtr ->
 data Game = Game
   { gameEntities       :: {-# UNPACK #-} !(IOVec Entity)
   , gameGrasses        :: {-# UNPACK #-} !(IOVec Entity)
+  , gameFerns          :: {-# UNPACK #-} !(IOVec Entity)
   , gameProgram        :: {-# UNPACK #-} !TexProgram
   , gameCamera         :: {-# UNPACK #-} !Camera
   , gameProj           :: {-# UNPACK #-} !(Linear.M44 GLfloat)
@@ -226,6 +239,11 @@ init w h = do
                            , textureUseFakeLighting = 1 })
               <$> loadTexture "res/grassTexture.png"
   grassModel <- loadObj "res/grassModel.obj"
+  fernTexture <- (\t -> t { textureNumRows         = 2
+                          , textureTransparent     = 1
+                          , textureUseFakeLighting = 1 })
+             <$> loadTexture "res/fern.png"
+  fernModel <- loadObj "res/fern.obj"
   let
     initEntities =
       [ Entity
@@ -234,12 +252,14 @@ init w h = do
         0.5
         texture
         model
+        0
       , Entity
         (Linear.V3 15 0 10)
         (Linear.axisAngle (Linear.V3 (0.0 :: GLfloat) 0.0 1.0) 0)
         0.2
         texture
         model
+        0
       ]
     grassEntities =
       [ Entity
@@ -248,6 +268,30 @@ init w h = do
         1.0
         grassTexture
         grassModel
+        0
+      ]
+    fernEntities =
+      [ Entity
+        (Linear.V3 20 0 10)
+        (Linear.axisAngle (Linear.V3 (0.0 :: GLfloat) 0.0 1.0) 0)
+        1.0
+        fernTexture
+        fernModel
+        0
+      , Entity
+        (Linear.V3 30 0 10)
+        (Linear.axisAngle (Linear.V3 (0.0 :: GLfloat) 0.0 1.0) 0)
+        1.0
+        fernTexture
+        fernModel
+        2
+      , Entity
+        (Linear.V3 40 0 10)
+        (Linear.axisAngle (Linear.V3 (0.0 :: GLfloat) 0.0 1.0) 0)
+        1.0
+        fernTexture
+        fernModel
+        1
       ]
   pack <- loadTexturePack
     "res/grass.png" "res/mud.png" "res/grassFlowers.png" "res/path.png"
@@ -255,6 +299,7 @@ init w h = do
   Game
     <$> V.unsafeThaw (V.fromList initEntities)
     <*> V.unsafeThaw (V.fromList grassEntities)
+    <*> V.unsafeThaw (V.fromList fernEntities)
     <*> mkProgram vertexShaderSrc fragmentShaderSrc
     <*> pure camera
     <*> pure proj
@@ -324,6 +369,7 @@ draw g = do
     let rotM33 = Linear.fromQuaternion (entityRot e) !!* entityScale e
         matrix = Linear.mkTransformationMat rotM33 (entityPos e)
     programSetModel (gameProgram g) matrix
+    programSetOffset (gameProgram g) (textureXOffset e) (textureYOffset e)
 
     glBindVertexArray $ modelVao $ gameRawModel g
     glDrawArrays GL_TRIANGLES 0 $ modelVertexCount $ gameRawModel g
@@ -331,12 +377,21 @@ draw g = do
     --glDrawElements
     --  GL_TRIANGLES (Utils.modelVertexCount model) GL_UNSIGNED_INT nullPtr
     glBindVertexArray 0
-  e0 <- VM.read (gameGrasses g) 0
-  programSetTexture (gameProgram g) (entityTex e0)
+  VM.read (gameGrasses g) 0 >>= programSetTexture (gameProgram g) . entityTex
   forM_ [0..VM.length (gameGrasses g) - 1] $ \i -> do
     e <- VM.read (gameGrasses g) i
     programSetModel
       (gameProgram g) (Linear.mkTransformationMat Linear.identity (entityPos e))
+    programSetOffset (gameProgram g) (textureXOffset e) (textureYOffset e)
+    glBindVertexArray $ modelVao $ entityModel e
+    glDrawArrays GL_TRIANGLES 0 $ modelVertexCount $ entityModel e
+    glBindVertexArray 0
+  VM.read (gameFerns g) 0 >>= programSetTexture (gameProgram g) . entityTex
+  forM_ [0..VM.length (gameFerns g) - 1] $ \i -> do
+    e <- VM.read (gameFerns g) i
+    programSetModel
+      (gameProgram g) (Linear.mkTransformationMat Linear.identity (entityPos e))
+    programSetOffset (gameProgram g) (textureXOffset e) (textureYOffset e)
     glBindVertexArray $ modelVao $ entityModel e
     glDrawArrays GL_TRIANGLES 0 $ modelVertexCount $ entityModel e
     glBindVertexArray 0

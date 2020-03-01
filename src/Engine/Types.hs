@@ -80,17 +80,27 @@ data Texture = Texture
   , textureReflectivity    :: {-# UNPACK #-} !GLfloat
   , textureTransparent     :: {-# UNPACK #-} !GLboolean
   , textureUseFakeLighting :: {-# UNPACK #-} !GLfloat
+  , textureNumRows         :: {-# UNPACK #-} !Int
   } deriving Show
 $(deriveStorable ''Texture)
 
 data Entity = Entity
-  { entityPos   :: {-# UNPACK #-} !(Linear.V3 GLfloat)
-  , entityRot   :: {-# UNPACK #-} !(Linear.Quaternion GLfloat)
-  , entityScale :: {-# UNPACK #-} !GLfloat
-  , entityTex   :: {-# UNPACK #-} !Texture
-  , entityModel :: {-# UNPACK #-} !RawModel
+  { entityPos    :: {-# UNPACK #-} !(Linear.V3 GLfloat)
+  , entityRot    :: {-# UNPACK #-} !(Linear.Quaternion GLfloat)
+  , entityScale  :: {-# UNPACK #-} !GLfloat
+  , entityTex    :: {-# UNPACK #-} !Texture
+  , entityModel  :: {-# UNPACK #-} !RawModel
+  , entityTexIdx :: {-# UNPACK #-} !Int
   } deriving Show
 $(deriveStorable ''Entity)
+
+textureXOffset :: Entity -> GLfloat
+textureXOffset e = column / fromIntegral (textureNumRows (entityTex e))
+ where column = fromIntegral $ entityTexIdx e `rem` textureNumRows (entityTex e)
+
+textureYOffset :: Entity -> GLfloat
+textureYOffset e = row / fromIntegral (textureNumRows (entityTex e))
+ where row = fromIntegral $ entityTexIdx e `quot` textureNumRows (entityTex e)
 
 data TexturePack = TexturePack
   { packBackground :: {-# UNPACK #-} !Texture

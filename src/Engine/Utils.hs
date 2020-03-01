@@ -195,7 +195,7 @@ loadTexture path = do
       (castPtr dataPtr)
   glGenerateMipmap GL_TEXTURE_2D
   glBindTexture GL_TEXTURE_2D 0
-  return $ Texture texture 1.0 0.0 0 0
+  return $ Texture texture 1.0 0.0 0 0 1
 
 loadTexturePack
   :: FilePath -> FilePath -> FilePath -> FilePath -> IO TexturePack
