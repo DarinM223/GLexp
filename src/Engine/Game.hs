@@ -218,10 +218,12 @@ programSetUniforms p lights skyColor view proj = do
     glUniformMatrix4fv (pViewLoc p) 1 GL_TRUE (castPtr matrixPtr)
   with proj $ \matrixPtr ->
     glUniformMatrix4fv (pProjLoc p) 1 GL_TRUE (castPtr matrixPtr)
-  forM_ (zip3 lights (pLightPosLoc p) (pLightColorLoc p)) $ \(l, pLoc, cLoc) ->
+  forM_ (zip3 padded (pLightPosLoc p) (pLightColorLoc p)) $ \(l, pLoc, cLoc) ->
     setLightUniforms l pLoc cLoc
   glUniform3f (pSkyColorLoc p) r g b
- where Linear.V3 r g b = skyColor
+ where
+  Linear.V3 r g b = skyColor
+  padded = padLights lights (pLightPosLoc p) (pLightColorLoc p)
 
 programSetOffset :: TexProgram -> GLfloat -> GLfloat -> IO ()
 programSetOffset p = glUniform2f (pOffset p)
@@ -319,7 +321,7 @@ init w h = do
     <*> mkProgram vertexShaderSrc fragmentShaderSrc
     <*> pure camera
     <*> pure proj
-    <*> pure [light, light1, light2, light3]
+    <*> pure [light]
     <*> pure texture
     <*> pure model
     <*> Terrain.mkProgram maxLights
@@ -330,9 +332,6 @@ init w h = do
   camera = Camera (Linear.V3 10 2 30) (Linear.V3 0 0 (-1)) (Linear.V3 0 1 0)
   proj = perspectiveMat w h
   light = Light (Linear.V3 0 10000 (-7000)) (Linear.V3 1 1 1)
-  light1 = Light (Linear.V3 (-200) 10 (-200)) (Linear.V3 10 0 0)
-  light2 = Light (Linear.V3 200 10 200) (Linear.V3 0 0 10)
-  light3 = Light (Linear.V3 (-200) 10 200) (Linear.V3 0 10 0)
 
 update :: S.Set GLFW.Key -> MouseInfo -> GLfloat -> Game -> IO Game
 update keys mouseInfo dt g0 =

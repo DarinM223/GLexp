@@ -17,7 +17,6 @@ import Data.Bits (shiftL, (.|.))
 import Data.ByteString (ByteString)
 import Data.Fixed (mod')
 import Engine.Types
-  (Light, RawModel (..), Texture (..), TexturePack (..), setLightUniforms)
 import Engine.Utils (linkShaders, loadShader)
 import Foreign.C.String (withCString)
 import Foreign.Marshal.Alloc (alloca)
@@ -393,12 +392,13 @@ setUniforms t p lights skyColor view proj = do
     glUniformMatrix4fv (tViewLoc p) 1 GL_TRUE (castPtr matrixPtr)
   with proj $ \matrixPtr ->
     glUniformMatrix4fv (tProjLoc p) 1 GL_TRUE (castPtr matrixPtr)
-  forM_ (zip3 lights (tLightPosLoc p) (tLightColorLoc p)) $ \(l, pLoc, cLoc) ->
+  forM_ (zip3 padded (tLightPosLoc p) (tLightColorLoc p)) $ \(l, pLoc, cLoc) ->
     setLightUniforms l pLoc cLoc
   glUniform3f (tSkyColorLoc p) r g b
  where
   TexturePack{..} = terrainPack t
   Linear.V3 r g b = skyColor
+  padded = padLights lights (tLightPosLoc p) (tLightColorLoc p)
 
 draw :: Terrain -> TerrainProgram -> IO ()
 draw t p = do
