@@ -4,7 +4,7 @@
 module Engine.Game where
 
 import Control.Exception (bracket)
-import Control.Monad (forM_)
+import Control.Monad (forM, forM_)
 import Control.Monad.Primitive (PrimState)
 import Data.Bits ((.|.))
 import Data.ByteString (ByteString)
@@ -30,20 +30,21 @@ vertexShaderSrc :: ByteString
 vertexShaderSrc = T.encodeUtf8
   [text|
     #version 330 core
+    #define NUM_LIGHTS 4
     in vec3 position;
     in vec2 texCoord;
     in vec3 normal;
 
     out vec2 v_texCoord;
     out vec3 surfaceNormal;
-    out vec3 lightVec;
+    out vec3 lightVec[NUM_LIGHTS];
     out vec3 cameraVec;
     out float visibility;
 
     uniform mat4 model;      // Transformation of the model
     uniform mat4 view;       // Transformation of the camera
     uniform mat4 projection; // Clipping coordinates outside FOV
-    uniform vec3 lightPosition;
+    uniform vec3 lightPosition[NUM_LIGHTS];
     uniform float useFakeLighting;
     uniform float numberOfRows;
     uniform vec2 offset;
@@ -63,7 +64,9 @@ vertexShaderSrc = T.encodeUtf8
       }
 
       surfaceNormal = (model * vec4(actualNormal, 0.0)).xyz;
-      lightVec = lightPosition - worldPosition.xyz;
+      for (int i = 0; i < NUM_LIGHTS; i++) {
+        lightVec[i] = lightPosition[i] - worldPosition.xyz;
+      }
       cameraVec = (inverse(view) * vec4(0.0, 0.0, 0.0, 1.0)).xyz - worldPosition.xyz;
 
       float distance = length(positionRelativeToCam.xyz);
@@ -75,14 +78,15 @@ fragmentShaderSrc :: ByteString
 fragmentShaderSrc = T.encodeUtf8
   [text|
     #version 330 core
+    #define NUM_LIGHTS 4
     in vec2 v_texCoord;
     in vec3 surfaceNormal;
-    in vec3 lightVec;
+    in vec3 lightVec[NUM_LIGHTS];
     in vec3 cameraVec;
     in float visibility;
 
     uniform sampler2D myTexture;
-    uniform vec3 lightColor;
+    uniform vec3 lightColor[NUM_LIGHTS];
     uniform float shineDamper;
     uniform float reflectivity;
     uniform vec3 skyColor;
@@ -91,22 +95,28 @@ fragmentShaderSrc = T.encodeUtf8
 
     void main() {
       vec3 unitNormal = normalize(surfaceNormal);
-      vec3 unitLightVec = normalize(lightVec);
-      float brightness = max(dot(unitNormal, unitLightVec), 0.2);
-      vec3 diffuse = brightness * lightColor;
-
       vec3 unitCameraVec = normalize(cameraVec);
-      vec3 reflectedLightVec = reflect(-unitLightVec, unitNormal);
-      float specularFactor = max(dot(reflectedLightVec, unitCameraVec), 0.0);
-      float dampedFactor = pow(specularFactor, shineDamper);
-      vec3 finalSpecular = dampedFactor * reflectivity * lightColor;
+
+      vec3 totalDiffuse = vec3(0.0);
+      vec3 totalSpecular = vec3(0.0);
+      for (int i = 0; i < NUM_LIGHTS; i++) {
+        vec3 unitLightVec = normalize(lightVec[i]);
+        float brightness = max(dot(unitNormal, unitLightVec), 0.0);
+        vec3 reflectedLightVec = reflect(-unitLightVec, unitNormal);
+        float specularFactor = max(dot(reflectedLightVec, unitCameraVec), 0.0);
+        float dampedFactor = pow(specularFactor, shineDamper);
+
+        totalDiffuse += brightness * lightColor[i];
+        totalSpecular += dampedFactor * reflectivity * lightColor[i];
+      }
+      totalDiffuse = max(totalDiffuse, 0.2);
 
       vec4 textureColor = texture(myTexture, v_texCoord);
       if (textureColor.a < 0.5) {
         discard;
       }
 
-      color = vec4(diffuse, 1.0) * textureColor + vec4(finalSpecular, 1.0);
+      color = vec4(totalDiffuse, 1.0) * textureColor + vec4(totalSpecular, 1.0);
       color = mix(vec4(skyColor, 1.0), color, visibility);
     }
   |]
@@ -125,6 +135,9 @@ indices = V.fromList
   , 3, 1, 2 -- Bottom right triangle
   ]
 
+maxLights :: Int
+maxLights = 4
+
 type IOVec a = V.MVector (PrimState IO) a
 
 data TexProgram = TexProgram
@@ -133,8 +146,8 @@ data TexProgram = TexProgram
   , pModelLoc        :: {-# UNPACK #-} !GLint
   , pViewLoc         :: {-# UNPACK #-} !GLint
   , pProjLoc         :: {-# UNPACK #-} !GLint
-  , pLightPosLoc     :: {-# UNPACK #-} !GLint
-  , pLightColorLoc   :: {-# UNPACK #-} !GLint
+  , pLightPosLoc     :: ![GLint]
+  , pLightColorLoc   :: ![GLint]
   , pShineDamperLoc  :: {-# UNPACK #-} !GLint
   , pReflectivityLoc :: {-# UNPACK #-} !GLint
   , pFakeLightingLoc :: {-# UNPACK #-} !GLint
@@ -157,10 +170,12 @@ mkProgram vertexShaderSrc0 fragmentShaderSrc0 = do
     glGetUniformLocation pProgram name
   pProjLoc <- withCString "projection" $ \name ->
     glGetUniformLocation pProgram name
-  pLightPosLoc <- withCString "lightPosition" $ \name ->
-    glGetUniformLocation pProgram name
-  pLightColorLoc <- withCString "lightColor" $ \name ->
-    glGetUniformLocation pProgram name
+  pLightPosLoc <- forM [0..maxLights - 1] $ \i ->
+    withCString ("lightPosition[" ++ show i ++ "]") $ \name ->
+      glGetUniformLocation pProgram name
+  pLightColorLoc <- forM [0..maxLights - 1] $ \i ->
+    withCString ("lightColor[" ++ show i ++ "]") $ \name ->
+      glGetUniformLocation pProgram name
   pShineDamperLoc <- withCString "shineDamper" $ \name ->
     glGetUniformLocation pProgram name
   pReflectivityLoc <- withCString "reflectivity" $ \name ->
@@ -193,17 +208,18 @@ programSetTexture p tex = do
 
 programSetUniforms
   :: TexProgram
-  -> Light
+  -> [Light]
   -> Linear.V3 GLfloat
   -> Linear.M44 GLfloat
   -> Linear.M44 GLfloat
   -> IO ()
-programSetUniforms p light skyColor view proj = do
+programSetUniforms p lights skyColor view proj = do
   with view $ \matrixPtr ->
     glUniformMatrix4fv (pViewLoc p) 1 GL_TRUE (castPtr matrixPtr)
   with proj $ \matrixPtr ->
     glUniformMatrix4fv (pProjLoc p) 1 GL_TRUE (castPtr matrixPtr)
-  setLightUniforms light (pLightPosLoc p) (pLightColorLoc p)
+  forM_ (zip3 lights (pLightPosLoc p) (pLightColorLoc p)) $ \(l, pLoc, cLoc) ->
+    setLightUniforms l pLoc cLoc
   glUniform3f (pSkyColorLoc p) r g b
  where Linear.V3 r g b = skyColor
 
@@ -221,7 +237,7 @@ data Game = Game
   , gameProgram        :: {-# UNPACK #-} !TexProgram
   , gameCamera         :: {-# UNPACK #-} !Camera
   , gameProj           :: {-# UNPACK #-} !(Linear.M44 GLfloat)
-  , gameLight          :: {-# UNPACK #-} !Light
+  , gameLights         :: ![Light]
   , gameTexture        :: {-# UNPACK #-} !Texture
   , gameRawModel       :: {-# UNPACK #-} !RawModel
   , gameTerrainProgram :: {-# UNPACK #-} !Terrain.TerrainProgram
@@ -303,17 +319,20 @@ init w h = do
     <*> mkProgram vertexShaderSrc fragmentShaderSrc
     <*> pure camera
     <*> pure proj
-    <*> pure light
+    <*> pure [light, light1, light2, light3]
     <*> pure texture
     <*> pure model
-    <*> Terrain.mkProgram
+    <*> Terrain.mkProgram maxLights
     <*> Terrain.mkTerrain 0 0 pack blendMap "res/heightmap.png"
     <*> Terrain.mkTerrain 1 0 pack blendMap "res/heightmap.png"
     <*> pure (Linear.V3 0.5 0.5 0.5)
  where
   camera = Camera (Linear.V3 10 2 30) (Linear.V3 0 0 (-1)) (Linear.V3 0 1 0)
   proj = perspectiveMat w h
-  light = Light (Linear.V3 0 0 30) (Linear.V3 1 1 1)
+  light = Light (Linear.V3 0 10000 (-7000)) (Linear.V3 1 1 1)
+  light1 = Light (Linear.V3 (-200) 10 (-200)) (Linear.V3 10 0 0)
+  light2 = Light (Linear.V3 200 10 200) (Linear.V3 0 0 10)
+  light3 = Light (Linear.V3 (-200) 10 200) (Linear.V3 0 10 0)
 
 update :: S.Set GLFW.Key -> MouseInfo -> GLfloat -> Game -> IO Game
 update keys mouseInfo dt g0 =
@@ -351,7 +370,7 @@ draw g = do
   Terrain.setUniforms
     (gameTerrain1 g)
     (gameTerrainProgram g)
-    (gameLight g)
+    (gameLights g)
     (gameSkyColor g)
     view
     (gameProj g)
@@ -360,7 +379,7 @@ draw g = do
 
   glUseProgram $ pProgram $ gameProgram g
   programSetUniforms
-    (gameProgram g) (gameLight g) (gameSkyColor g) view (gameProj g)
+    (gameProgram g) (gameLights g) (gameSkyColor g) view (gameProj g)
   programSetTexture (gameProgram g) (gameTexture g)
 
   forM_ [0..VM.length (gameEntities g) - 1] $ \i -> do
@@ -377,21 +396,16 @@ draw g = do
     --glDrawElements
     --  GL_TRIANGLES (Utils.modelVertexCount model) GL_UNSIGNED_INT nullPtr
     glBindVertexArray 0
-  VM.read (gameGrasses g) 0 >>= programSetTexture (gameProgram g) . entityTex
-  forM_ [0..VM.length (gameGrasses g) - 1] $ \i -> do
-    e <- VM.read (gameGrasses g) i
-    programSetModel
-      (gameProgram g) (Linear.mkTransformationMat Linear.identity (entityPos e))
-    programSetOffset (gameProgram g) (textureXOffset e) (textureYOffset e)
-    glBindVertexArray $ modelVao $ entityModel e
-    glDrawArrays GL_TRIANGLES 0 $ modelVertexCount $ entityModel e
-    glBindVertexArray 0
-  VM.read (gameFerns g) 0 >>= programSetTexture (gameProgram g) . entityTex
-  forM_ [0..VM.length (gameFerns g) - 1] $ \i -> do
-    e <- VM.read (gameFerns g) i
-    programSetModel
-      (gameProgram g) (Linear.mkTransformationMat Linear.identity (entityPos e))
-    programSetOffset (gameProgram g) (textureXOffset e) (textureYOffset e)
+  drawEntities (gameProgram g) (gameGrasses g)
+  drawEntities (gameProgram g) (gameFerns g)
+
+drawEntities :: TexProgram -> IOVec Entity -> IO ()
+drawEntities p v = do
+  VM.read v 0 >>= programSetTexture p . entityTex
+  forM_ [0..VM.length v - 1] $ \i -> do
+    e <- VM.read v i
+    programSetModel p (Linear.mkTransformationMat Linear.identity (entityPos e))
+    programSetOffset p (textureXOffset e) (textureYOffset e)
     glBindVertexArray $ modelVao $ entityModel e
     glDrawArrays GL_TRIANGLES 0 $ modelVertexCount $ entityModel e
     glBindVertexArray 0

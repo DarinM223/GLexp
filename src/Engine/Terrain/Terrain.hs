@@ -12,6 +12,7 @@ module Engine.Terrain.Terrain
 
 import Codec.Picture
 import Control.Exception (bracket)
+import Control.Monad (forM, forM_)
 import Data.Bits (shiftL, (.|.))
 import Data.ByteString (ByteString)
 import Data.Fixed (mod')
@@ -34,20 +35,21 @@ vertexShaderSrc :: ByteString
 vertexShaderSrc = T.encodeUtf8
   [text|
     #version 330 core
+    #define NUM_LIGHTS 4
     in vec3 position;
     in vec2 texCoord;
     in vec3 normal;
 
     out vec2 v_texCoord;
     out vec3 surfaceNormal;
-    out vec3 lightVec;
+    out vec3 lightVec[NUM_LIGHTS];
     out vec3 cameraVec;
     out float visibility;
 
     uniform mat4 model;      // Transformation of the model
     uniform mat4 view;       // Transformation of the camera
     uniform mat4 projection; // Clipping coordinates outside FOV
-    uniform vec3 lightPosition;
+    uniform vec3 lightPosition[NUM_LIGHTS];
 
     const float density = 0.007;
     const float gradient = 1.5;
@@ -59,7 +61,9 @@ vertexShaderSrc = T.encodeUtf8
       v_texCoord = texCoord;
 
       surfaceNormal = (model * vec4(normal, 0.0)).xyz;
-      lightVec = lightPosition - worldPosition.xyz;
+      for (int i = 0; i < NUM_LIGHTS; i++) {
+        lightVec[i] = lightPosition[i] - worldPosition.xyz;
+      }
       cameraVec = (inverse(view) * vec4(0.0, 0.0, 0.0, 1.0)).xyz - worldPosition.xyz;
 
       float distance = length(positionRelativeToCam.xyz);
@@ -71,9 +75,10 @@ fragmentShaderSrc :: ByteString
 fragmentShaderSrc = T.encodeUtf8
   [text|
     #version 330 core
+    #define NUM_LIGHTS 4
     in vec2 v_texCoord;
     in vec3 surfaceNormal;
-    in vec3 lightVec;
+    in vec3 lightVec[NUM_LIGHTS];
     in vec3 cameraVec;
     in float visibility;
 
@@ -83,7 +88,7 @@ fragmentShaderSrc = T.encodeUtf8
     uniform sampler2D bTexture;
     uniform sampler2D blendMap;
 
-    uniform vec3 lightColor;
+    uniform vec3 lightColor[NUM_LIGHTS];
     uniform float shineDamper;
     uniform float reflectivity;
     uniform vec3 skyColor;
@@ -101,17 +106,23 @@ fragmentShaderSrc = T.encodeUtf8
       vec4 totalColor = backgroundTextureColor + rTextureColor + gTextureColor + bTextureColor;
 
       vec3 unitNormal = normalize(surfaceNormal);
-      vec3 unitLightVec = normalize(lightVec);
-      float brightness = max(dot(unitNormal, unitLightVec), 0.2);
-      vec3 diffuse = brightness * lightColor;
-
       vec3 unitCameraVec = normalize(cameraVec);
-      vec3 reflectedLightVec = reflect(-unitLightVec, unitNormal);
-      float specularFactor = max(dot(reflectedLightVec, unitCameraVec), 0.0);
-      float dampedFactor = pow(specularFactor, shineDamper);
-      vec3 finalSpecular = dampedFactor * reflectivity * lightColor;
 
-      color = vec4(diffuse, 1.0) * totalColor + vec4(finalSpecular, 1.0);
+      vec3 totalDiffuse = vec3(0.0);
+      vec3 totalSpecular = vec3(0.0);
+      for (int i = 0; i < NUM_LIGHTS; i++) {
+        vec3 unitLightVec = normalize(lightVec[i]);
+        float brightness = max(dot(unitNormal, unitLightVec), 0.0);
+        vec3 reflectedLightVec = reflect(-unitLightVec, unitNormal);
+        float specularFactor = max(dot(reflectedLightVec, unitCameraVec), 0.0);
+        float dampedFactor = pow(specularFactor, shineDamper);
+
+        totalDiffuse += brightness * lightColor[i];
+        totalSpecular += dampedFactor * reflectivity * lightColor[i];
+      }
+      totalDiffuse = max(totalDiffuse, 0.2);
+
+      color = vec4(totalDiffuse, 1.0) * totalColor + vec4(totalSpecular, 1.0);
       color = mix(vec4(skyColor, 1.0), color, visibility);
     }
   |]
@@ -298,15 +309,15 @@ data TerrainProgram = TerrainProgram
   , tModelLoc        :: {-# UNPACK #-} !GLint
   , tViewLoc         :: {-# UNPACK #-} !GLint
   , tProjLoc         :: {-# UNPACK #-} !GLint
-  , tLightPosLoc     :: {-# UNPACK #-} !GLint
-  , tLightColorLoc   :: {-# UNPACK #-} !GLint
+  , tLightPosLoc     :: ![GLint]
+  , tLightColorLoc   :: ![GLint]
   , tShineDamperLoc  :: {-# UNPACK #-} !GLint
   , tReflectivityLoc :: {-# UNPACK #-} !GLint
   , tSkyColorLoc     :: {-# UNPACK #-} !GLint
   }
 
-mkProgram :: IO TerrainProgram
-mkProgram = do
+mkProgram :: Int -> IO TerrainProgram
+mkProgram maxLights = do
   tProgram <-
     bracket loadVertexShader glDeleteShader $ \vertexShader ->
     bracket loadFragmentShader glDeleteShader $ \fragmentShader ->
@@ -329,10 +340,12 @@ mkProgram = do
     glGetUniformLocation tProgram name
   tProjLoc <- withCString "projection" $ \name ->
     glGetUniformLocation tProgram name
-  tLightPosLoc <- withCString "lightPosition" $ \name ->
-    glGetUniformLocation tProgram name
-  tLightColorLoc <- withCString "lightColor" $ \name ->
-    glGetUniformLocation tProgram name
+  tLightPosLoc <- forM [0..maxLights - 1] $ \i ->
+    withCString ("lightPosition[" ++ show i ++ "]") $ \name ->
+      glGetUniformLocation tProgram name
+  tLightColorLoc <- forM [0..maxLights - 1] $ \i ->
+    withCString ("lightColor[" ++ show i ++ "]") $ \name ->
+      glGetUniformLocation tProgram name
   tShineDamperLoc <- withCString "shineDamper" $ \name ->
     glGetUniformLocation tProgram name
   tReflectivityLoc <- withCString "reflectivity" $ \name ->
@@ -347,12 +360,12 @@ mkProgram = do
 setUniforms
   :: Terrain
   -> TerrainProgram
-  -> Light
+  -> [Light]
   -> Linear.V3 GLfloat
   -> Linear.M44 GLfloat
   -> Linear.M44 GLfloat
   -> IO ()
-setUniforms t p light skyColor view proj = do
+setUniforms t p lights skyColor view proj = do
   glActiveTexture GL_TEXTURE0
   glBindTexture GL_TEXTURE_2D $ textureID packBackground
   glUniform1i (tBackTextureLoc p) 0
@@ -380,7 +393,8 @@ setUniforms t p light skyColor view proj = do
     glUniformMatrix4fv (tViewLoc p) 1 GL_TRUE (castPtr matrixPtr)
   with proj $ \matrixPtr ->
     glUniformMatrix4fv (tProjLoc p) 1 GL_TRUE (castPtr matrixPtr)
-  setLightUniforms light (tLightPosLoc p) (tLightColorLoc p)
+  forM_ (zip3 lights (tLightPosLoc p) (tLightColorLoc p)) $ \(l, pLoc, cLoc) ->
+    setLightUniforms l pLoc cLoc
   glUniform3f (tSkyColorLoc p) r g b
  where
   TexturePack{..} = terrainPack t
