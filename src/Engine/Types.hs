@@ -56,24 +56,27 @@ toViewMatrix :: Camera -> Linear.M44 GLfloat
 toViewMatrix (Camera pos front up) = Linear.lookAt pos (pos ^+^ front) up
 
 data Light = Light
-  { lightPos   :: {-# UNPACK #-} !(Linear.V3 GLfloat)
-  , lightColor :: {-# UNPACK #-} !(Linear.V3 GLfloat)
+  { lightPos         :: {-# UNPACK #-} !(Linear.V3 GLfloat)
+  , lightColor       :: {-# UNPACK #-} !(Linear.V3 GLfloat)
+  , lightAttenuation :: {-# UNPACK #-} !(Linear.V3 GLfloat)
   } deriving Show
 
 padLights :: [Light] -> [GLint] -> [GLint] -> [Light]
 padLights (l:ls) (_:as) (_:bs) = l:padLights ls as bs
 padLights [] (_:as) (_:bs)     = l:padLights [] as bs
- where l = Light (Linear.V3 0 0 0) (Linear.V3 0 0 0)
+ where l = Light (Linear.V3 0 0 0) (Linear.V3 0 0 0) (Linear.V3 1 0 0)
 padLights _ [] _ = []
 padLights _ _ [] = []
 
-setLightUniforms :: Light -> GLint -> GLint -> IO ()
-setLightUniforms light posLoc colorLoc = do
+setLightUniforms :: Light -> GLint -> GLint -> GLint -> IO ()
+setLightUniforms light posLoc colorLoc attLoc = do
   glUniform3f posLoc posX posY posZ
   glUniform3f colorLoc cX cY cZ
+  glUniform3f attLoc attX attY attZ
  where
   Linear.V3 posX posY posZ = lightPos light
   Linear.V3 cX cY cZ = lightColor light
+  Linear.V3 attX attY attZ = lightAttenuation light
 
 data RawModel = RawModel
   { modelVao         :: {-# UNPACK #-} !GLuint

@@ -9,6 +9,7 @@ import Control.Monad.Primitive (PrimState)
 import Data.Bits ((.|.))
 import Data.ByteString (ByteString)
 import Data.Foldable (foldlM)
+import Data.List (zip4)
 import Engine.Types
 import Engine.Utils
 import Foreign.C.String (withCString)
@@ -87,6 +88,7 @@ fragmentShaderSrc = T.encodeUtf8
 
     uniform sampler2D myTexture;
     uniform vec3 lightColor[NUM_LIGHTS];
+    uniform vec3 attenuation[NUM_LIGHTS];
     uniform float shineDamper;
     uniform float reflectivity;
     uniform vec3 skyColor;
@@ -100,14 +102,18 @@ fragmentShaderSrc = T.encodeUtf8
       vec3 totalDiffuse = vec3(0.0);
       vec3 totalSpecular = vec3(0.0);
       for (int i = 0; i < NUM_LIGHTS; i++) {
+        float distance = length(lightVec[i]);
+        float attenuationFactor = attenuation[i].x +
+                                  attenuation[i].y * distance +
+                                  attenuation[i].z * distance * distance;
         vec3 unitLightVec = normalize(lightVec[i]);
         float brightness = max(dot(unitNormal, unitLightVec), 0.0);
         vec3 reflectedLightVec = reflect(-unitLightVec, unitNormal);
         float specularFactor = max(dot(reflectedLightVec, unitCameraVec), 0.0);
         float dampedFactor = pow(specularFactor, shineDamper);
 
-        totalDiffuse += brightness * lightColor[i];
-        totalSpecular += dampedFactor * reflectivity * lightColor[i];
+        totalDiffuse += brightness * lightColor[i] / attenuationFactor;
+        totalSpecular += dampedFactor * reflectivity * lightColor[i] / attenuationFactor;
       }
       totalDiffuse = max(totalDiffuse, 0.2);
 
@@ -141,19 +147,20 @@ maxLights = 4
 type IOVec a = V.MVector (PrimState IO) a
 
 data TexProgram = TexProgram
-  { pProgram         :: {-# UNPACK #-} !GLuint
-  , pTextureLoc      :: {-# UNPACK #-} !GLint
-  , pModelLoc        :: {-# UNPACK #-} !GLint
-  , pViewLoc         :: {-# UNPACK #-} !GLint
-  , pProjLoc         :: {-# UNPACK #-} !GLint
-  , pLightPosLoc     :: ![GLint]
-  , pLightColorLoc   :: ![GLint]
-  , pShineDamperLoc  :: {-# UNPACK #-} !GLint
-  , pReflectivityLoc :: {-# UNPACK #-} !GLint
-  , pFakeLightingLoc :: {-# UNPACK #-} !GLint
-  , pSkyColorLoc     :: {-# UNPACK #-} !GLint
-  , pNumberOfRows    :: {-# UNPACK #-} !GLint
-  , pOffset          :: {-# UNPACK #-} !GLint
+  { pProgram             :: {-# UNPACK #-} !GLuint
+  , pTextureLoc          :: {-# UNPACK #-} !GLint
+  , pModelLoc            :: {-# UNPACK #-} !GLint
+  , pViewLoc             :: {-# UNPACK #-} !GLint
+  , pProjLoc             :: {-# UNPACK #-} !GLint
+  , pLightPosLoc         :: ![GLint]
+  , pLightColorLoc       :: ![GLint]
+  , pLightAttenuationLoc :: ![GLint]
+  , pShineDamperLoc      :: {-# UNPACK #-} !GLint
+  , pReflectivityLoc     :: {-# UNPACK #-} !GLint
+  , pFakeLightingLoc     :: {-# UNPACK #-} !GLint
+  , pSkyColorLoc         :: {-# UNPACK #-} !GLint
+  , pNumberOfRows        :: {-# UNPACK #-} !GLint
+  , pOffset              :: {-# UNPACK #-} !GLint
   }
 
 mkProgram :: ByteString -> ByteString -> IO TexProgram
@@ -175,6 +182,9 @@ mkProgram vertexShaderSrc0 fragmentShaderSrc0 = do
       glGetUniformLocation pProgram name
   pLightColorLoc <- forM [0..maxLights - 1] $ \i ->
     withCString ("lightColor[" ++ show i ++ "]") $ \name ->
+      glGetUniformLocation pProgram name
+  pLightAttenuationLoc <- forM [0..maxLights - 1] $ \i ->
+    withCString ("attenuation[" ++ show i ++ "]") $ \name ->
       glGetUniformLocation pProgram name
   pShineDamperLoc <- withCString "shineDamper" $ \name ->
     glGetUniformLocation pProgram name
@@ -218,12 +228,14 @@ programSetUniforms p lights skyColor view proj = do
     glUniformMatrix4fv (pViewLoc p) 1 GL_TRUE (castPtr matrixPtr)
   with proj $ \matrixPtr ->
     glUniformMatrix4fv (pProjLoc p) 1 GL_TRUE (castPtr matrixPtr)
-  forM_ (zip3 padded (pLightPosLoc p) (pLightColorLoc p)) $ \(l, pLoc, cLoc) ->
-    setLightUniforms l pLoc cLoc
+  forM_ lightsWithLocs $ \(l, posLoc, colLoc, attLoc) ->
+    setLightUniforms l posLoc colLoc attLoc
   glUniform3f (pSkyColorLoc p) r g b
  where
   Linear.V3 r g b = skyColor
   padded = padLights lights (pLightPosLoc p) (pLightColorLoc p)
+  lightsWithLocs =
+    zip4 padded (pLightPosLoc p) (pLightColorLoc p) (pLightAttenuationLoc p)
 
 programSetOffset :: TexProgram -> GLfloat -> GLfloat -> IO ()
 programSetOffset p = glUniform2f (pOffset p)
@@ -321,7 +333,7 @@ init w h = do
     <*> mkProgram vertexShaderSrc fragmentShaderSrc
     <*> pure camera
     <*> pure proj
-    <*> pure [light]
+    <*> pure [light1, light2, light3, light4]
     <*> pure texture
     <*> pure model
     <*> Terrain.mkProgram maxLights
@@ -331,7 +343,14 @@ init w h = do
  where
   camera = Camera (Linear.V3 10 2 30) (Linear.V3 0 0 (-1)) (Linear.V3 0 1 0)
   proj = perspectiveMat w h
-  light = Light (Linear.V3 0 10000 (-7000)) (Linear.V3 1 1 1)
+  light1 =
+    Light (Linear.V3 0 1000 (-7000)) (Linear.V3 0.4 0.4 0.4) (Linear.V3 1 0 0)
+  light2 =
+    Light (Linear.V3 185 10 (-293)) (Linear.V3 2 0 0) (Linear.V3 1 0.01 0.002)
+  light3 =
+    Light (Linear.V3 370 17 (-300)) (Linear.V3 0 2 2) (Linear.V3 1 0.01 0.002)
+  light4 =
+    Light (Linear.V3 293 7 (-305)) (Linear.V3 2 2 0) (Linear.V3 1 0.01 0.002)
 
 update :: S.Set GLFW.Key -> MouseInfo -> GLfloat -> Game -> IO Game
 update keys mouseInfo dt g0 =

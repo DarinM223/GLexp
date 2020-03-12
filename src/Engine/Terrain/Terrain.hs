@@ -16,6 +16,7 @@ import Control.Monad (forM, forM_)
 import Data.Bits (shiftL, (.|.))
 import Data.ByteString (ByteString)
 import Data.Fixed (mod')
+import Data.List (zip4)
 import Engine.Types
 import Engine.Utils (linkShaders, loadShader)
 import Foreign.C.String (withCString)
@@ -88,6 +89,7 @@ fragmentShaderSrc = T.encodeUtf8
     uniform sampler2D blendMap;
 
     uniform vec3 lightColor[NUM_LIGHTS];
+    uniform vec3 attenuation[NUM_LIGHTS];
     uniform float shineDamper;
     uniform float reflectivity;
     uniform vec3 skyColor;
@@ -110,14 +112,18 @@ fragmentShaderSrc = T.encodeUtf8
       vec3 totalDiffuse = vec3(0.0);
       vec3 totalSpecular = vec3(0.0);
       for (int i = 0; i < NUM_LIGHTS; i++) {
+        float distance = length(lightVec[i]);
+        float attenuationFactor = attenuation[i].x +
+                                  attenuation[i].y * distance +
+                                  attenuation[i].z * distance * distance;
         vec3 unitLightVec = normalize(lightVec[i]);
         float brightness = max(dot(unitNormal, unitLightVec), 0.0);
         vec3 reflectedLightVec = reflect(-unitLightVec, unitNormal);
         float specularFactor = max(dot(reflectedLightVec, unitCameraVec), 0.0);
         float dampedFactor = pow(specularFactor, shineDamper);
 
-        totalDiffuse += brightness * lightColor[i];
-        totalSpecular += dampedFactor * reflectivity * lightColor[i];
+        totalDiffuse += brightness * lightColor[i] / attenuationFactor;
+        totalSpecular += dampedFactor * reflectivity * lightColor[i] / attenuationFactor;
       }
       totalDiffuse = max(totalDiffuse, 0.2);
 
@@ -299,20 +305,21 @@ barycentric (Linear.V3 p1x p1y p1z)
   l3 = 1.0 - l1 - l2
 
 data TerrainProgram = TerrainProgram
-  { tProgram         :: {-# UNPACK #-} !GLuint
-  , tBackTextureLoc  :: {-# UNPACK #-} !GLint
-  , tRTextureLoc     :: {-# UNPACK #-} !GLint
-  , tGTextureLoc     :: {-# UNPACK #-} !GLint
-  , tBTextureLoc     :: {-# UNPACK #-} !GLint
-  , tBlendMapLoc     :: {-# UNPACK #-} !GLint
-  , tModelLoc        :: {-# UNPACK #-} !GLint
-  , tViewLoc         :: {-# UNPACK #-} !GLint
-  , tProjLoc         :: {-# UNPACK #-} !GLint
-  , tLightPosLoc     :: ![GLint]
-  , tLightColorLoc   :: ![GLint]
-  , tShineDamperLoc  :: {-# UNPACK #-} !GLint
-  , tReflectivityLoc :: {-# UNPACK #-} !GLint
-  , tSkyColorLoc     :: {-# UNPACK #-} !GLint
+  { tProgram             :: {-# UNPACK #-} !GLuint
+  , tBackTextureLoc      :: {-# UNPACK #-} !GLint
+  , tRTextureLoc         :: {-# UNPACK #-} !GLint
+  , tGTextureLoc         :: {-# UNPACK #-} !GLint
+  , tBTextureLoc         :: {-# UNPACK #-} !GLint
+  , tBlendMapLoc         :: {-# UNPACK #-} !GLint
+  , tModelLoc            :: {-# UNPACK #-} !GLint
+  , tViewLoc             :: {-# UNPACK #-} !GLint
+  , tProjLoc             :: {-# UNPACK #-} !GLint
+  , tLightPosLoc         :: ![GLint]
+  , tLightColorLoc       :: ![GLint]
+  , tLightAttenuationLoc :: ![GLint]
+  , tShineDamperLoc      :: {-# UNPACK #-} !GLint
+  , tReflectivityLoc     :: {-# UNPACK #-} !GLint
+  , tSkyColorLoc         :: {-# UNPACK #-} !GLint
   }
 
 mkProgram :: Int -> IO TerrainProgram
@@ -344,6 +351,9 @@ mkProgram maxLights = do
       glGetUniformLocation tProgram name
   tLightColorLoc <- forM [0..maxLights - 1] $ \i ->
     withCString ("lightColor[" ++ show i ++ "]") $ \name ->
+      glGetUniformLocation tProgram name
+  tLightAttenuationLoc <- forM [0..maxLights - 1] $ \i ->
+    withCString ("attenuation[" ++ show i ++ "]") $ \name ->
       glGetUniformLocation tProgram name
   tShineDamperLoc <- withCString "shineDamper" $ \name ->
     glGetUniformLocation tProgram name
@@ -392,13 +402,15 @@ setUniforms t p lights skyColor view proj = do
     glUniformMatrix4fv (tViewLoc p) 1 GL_TRUE (castPtr matrixPtr)
   with proj $ \matrixPtr ->
     glUniformMatrix4fv (tProjLoc p) 1 GL_TRUE (castPtr matrixPtr)
-  forM_ (zip3 padded (tLightPosLoc p) (tLightColorLoc p)) $ \(l, pLoc, cLoc) ->
-    setLightUniforms l pLoc cLoc
+  forM_ lightsWithLocs $ \(l, posLoc, colLoc, attLoc) ->
+    setLightUniforms l posLoc colLoc attLoc
   glUniform3f (tSkyColorLoc p) r g b
  where
   TexturePack{..} = terrainPack t
   Linear.V3 r g b = skyColor
   padded = padLights lights (tLightPosLoc p) (tLightColorLoc p)
+  lightsWithLocs =
+    zip4 padded (tLightPosLoc p) (tLightColorLoc p) (tLightAttenuationLoc p)
 
 draw :: Terrain -> TerrainProgram -> IO ()
 draw t p = do
