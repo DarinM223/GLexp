@@ -248,6 +248,7 @@ data Game = Game
   { gameEntities       :: {-# UNPACK #-} !(IOVec Entity)
   , gameGrasses        :: {-# UNPACK #-} !(IOVec Entity)
   , gameFerns          :: {-# UNPACK #-} !(IOVec Entity)
+  , gameLamps          :: {-# UNPACK #-} !(IOVec Entity)
   , gameProgram        :: {-# UNPACK #-} !TexProgram
   , gameCamera         :: {-# UNPACK #-} !Camera
   , gameProj           :: {-# UNPACK #-} !(Linear.M44 GLfloat)
@@ -274,6 +275,9 @@ init w h = do
                           , textureUseFakeLighting = 1 })
              <$> loadTexture "res/fern.png"
   fernModel <- loadObj "res/fern.obj"
+  lampTexture <- (\t -> t { textureUseFakeLighting = 1 })
+             <$> loadTexture "res/lamp.png"
+  lampModel <- loadObj "res/lamp.obj"
   let
     initEntities =
       [ Entity
@@ -323,6 +327,29 @@ init w h = do
         fernModel
         1
       ]
+    lampEntities =
+      [ Entity
+        (Linear.V3 20 0 20)
+        (Linear.axisAngle (Linear.V3 (0.0 :: GLfloat) 0.0 1.0) 0)
+        1.0
+        lampTexture
+        lampModel
+        0
+      , Entity
+        (Linear.V3 20 0 100)
+        (Linear.axisAngle (Linear.V3 (0.0 :: GLfloat) 0.0 1.0) 0)
+        1.0
+        lampTexture
+        lampModel
+        0
+      , Entity
+        (Linear.V3 100 0 20)
+        (Linear.axisAngle (Linear.V3 (0.0 :: GLfloat) 0.0 1.0) 0)
+        1.0
+        lampTexture
+        lampModel
+        0
+      ]
   pack <- loadTexturePack
     "res/grass.png" "res/mud.png" "res/grassFlowers.png" "res/path.png"
   blendMap <- loadTexture "res/blendMap.png"
@@ -330,6 +357,7 @@ init w h = do
     <$> V.unsafeThaw (V.fromList initEntities)
     <*> V.unsafeThaw (V.fromList grassEntities)
     <*> V.unsafeThaw (V.fromList fernEntities)
+    <*> V.unsafeThaw (V.fromList lampEntities)
     <*> mkProgram vertexShaderSrc fragmentShaderSrc
     <*> pure camera
     <*> pure proj
@@ -346,11 +374,11 @@ init w h = do
   light1 =
     Light (Linear.V3 0 1000 (-7000)) (Linear.V3 0.4 0.4 0.4) (Linear.V3 1 0 0)
   light2 =
-    Light (Linear.V3 185 10 (-293)) (Linear.V3 2 0 0) (Linear.V3 1 0.01 0.002)
+    Light (Linear.V3 20 17 20) (Linear.V3 2 0 0) (Linear.V3 1 0.01 0.002)
   light3 =
-    Light (Linear.V3 370 17 (-300)) (Linear.V3 0 2 2) (Linear.V3 1 0.01 0.002)
+    Light (Linear.V3 20 17 100) (Linear.V3 0 2 2) (Linear.V3 1 0.01 0.002)
   light4 =
-    Light (Linear.V3 293 7 (-305)) (Linear.V3 2 2 0) (Linear.V3 1 0.01 0.002)
+    Light (Linear.V3 100 17 20) (Linear.V3 2 2 0) (Linear.V3 1 0.01 0.002)
 
 update :: S.Set GLFW.Key -> MouseInfo -> GLfloat -> Game -> IO Game
 update keys mouseInfo dt g0 =
@@ -416,6 +444,7 @@ draw g = do
     glBindVertexArray 0
   drawEntities (gameProgram g) (gameGrasses g)
   drawEntities (gameProgram g) (gameFerns g)
+  drawEntities (gameProgram g) (gameLamps g)
 
 drawEntities :: TexProgram -> IOVec Entity -> IO ()
 drawEntities p v = do
