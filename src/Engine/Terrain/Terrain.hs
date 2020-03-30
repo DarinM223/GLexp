@@ -26,14 +26,14 @@ import Foreign.Ptr (castPtr, nullPtr, plusPtr)
 import Foreign.Storable (Storable (..), peek, sizeOf)
 import Graphics.GL.Core45
 import Graphics.GL.Types
-import NeatInterpolation (text)
-import qualified Data.Text.Encoding as T
+import qualified Data.ByteString.Char8 as BS
 import qualified Data.Vector.Storable as V
 import qualified Linear
+import qualified Text.RawString.QQ as QQ
 
 vertexShaderSrc :: ByteString
-vertexShaderSrc = T.encodeUtf8
-  [text|
+vertexShaderSrc = BS.pack
+  [QQ.r|
     #version 330 core
     #define NUM_LIGHTS 4
     in vec3 position;
@@ -72,8 +72,8 @@ vertexShaderSrc = T.encodeUtf8
   |]
 
 fragmentShaderSrc :: ByteString
-fragmentShaderSrc = T.encodeUtf8
-  [text|
+fragmentShaderSrc = BS.pack
+  [QQ.r|
     #version 330 core
     #define NUM_LIGHTS 4
     in vec2 v_texCoord;

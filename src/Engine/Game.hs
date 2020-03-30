@@ -18,18 +18,18 @@ import Foreign.Ptr (castPtr)
 import Graphics.GL.Core45
 import Graphics.GL.Types
 import Linear ((!!*))
-import NeatInterpolation (text)
+import qualified Data.ByteString.Char8 as BS
 import qualified Data.Set as S
-import qualified Data.Text.Encoding as T
 import qualified Data.Vector.Storable as V
 import qualified Data.Vector.Storable.Mutable as VM
 import qualified Engine.Terrain.Terrain as Terrain
 import qualified Graphics.UI.GLFW as GLFW
 import qualified Linear
+import qualified Text.RawString.QQ as QQ
 
 vertexShaderSrc :: ByteString
-vertexShaderSrc = T.encodeUtf8
-  [text|
+vertexShaderSrc = BS.pack
+  [QQ.r|
     #version 330 core
     #define NUM_LIGHTS 4
     in vec3 position;
@@ -76,8 +76,8 @@ vertexShaderSrc = T.encodeUtf8
   |]
 
 fragmentShaderSrc :: ByteString
-fragmentShaderSrc = T.encodeUtf8
-  [text|
+fragmentShaderSrc = BS.pack
+  [QQ.r|
     #version 330 core
     #define NUM_LIGHTS 4
     in vec2 v_texCoord;
