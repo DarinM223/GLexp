@@ -30,6 +30,7 @@ library
   import:              opts
   exposed-modules:     Engine
                      , Engine.Game
+                     , Engine.Skybox
                      , Engine.Terrain.Terrain
                      , Engine.Types
                      , Engine.Utils
@@ -42,6 +43,7 @@ library
                      , gl
                      , GLFW-b
                      , JuicyPixels
+                     , lens
                      , linear
                      , primitive
                      , raw-strings-qq

@@ -1,12 +1,13 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RecordWildCards #-}
 module Engine.Terrain.Terrain
-  ( Terrain (..)
-  , TerrainProgram (..)
-  , mkTerrain
+  ( Terrain
+  , TerrainProgram
+  , load
   , mkProgram
   , heightAt
   , setUniforms
+  , use
   , draw
   ) where
 
@@ -155,9 +156,8 @@ data Terrain = Terrain
   , terrainRawModel :: {-# UNPACK #-} !RawModel
   }
 
-mkTerrain
-  :: GLfloat -> GLfloat -> TexturePack -> Texture -> FilePath -> IO Terrain
-mkTerrain x z p t heightMapPath = do
+load :: GLfloat -> GLfloat -> TexturePack -> Texture -> FilePath -> IO Terrain
+load x z p t heightMapPath = do
   Right heightMap <- fmap convertRGB8 <$> readImage heightMapPath
   let vertexCount = imageHeight heightMap
       heights     = V.fromList $ do
@@ -411,6 +411,9 @@ setUniforms t p lights skyColor view proj = do
   padded = padLights lights (tLightPosLoc p) (tLightColorLoc p)
   lightsWithLocs =
     zip4 padded (tLightPosLoc p) (tLightColorLoc p) (tLightAttenuationLoc p)
+
+use :: TerrainProgram -> IO ()
+use p = glUseProgram $ tProgram p
 
 draw :: Terrain -> TerrainProgram -> IO ()
 draw t p = do

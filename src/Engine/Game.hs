@@ -4,6 +4,7 @@
 module Engine.Game where
 
 import Control.Exception (bracket)
+import Control.Lens ((^.))
 import Control.Monad (forM, forM_)
 import Control.Monad.Primitive (PrimState)
 import Data.Bits ((.|.))
@@ -22,6 +23,7 @@ import qualified Data.ByteString.Char8 as BS
 import qualified Data.Set as S
 import qualified Data.Vector.Storable as V
 import qualified Data.Vector.Storable.Mutable as VM
+import qualified Engine.Skybox as Skybox
 import qualified Engine.Terrain.Terrain as Terrain
 import qualified Graphics.UI.GLFW as GLFW
 import qualified Linear
@@ -258,6 +260,8 @@ data Game = Game
   , gameTerrainProgram :: {-# UNPACK #-} !Terrain.TerrainProgram
   , gameTerrain1       :: {-# UNPACK #-} !Terrain.Terrain
   , gameTerrain2       :: {-# UNPACK #-} !Terrain.Terrain
+  , gameSkyboxProgram  :: {-# UNPACK #-} !Skybox.SkyboxProgram
+  , gameSkybox         :: {-# UNPACK #-} !Skybox.Skybox
   , gameSkyColor       :: {-# UNPACK #-} !(Linear.V3 GLfloat)
   }
 
@@ -365,8 +369,17 @@ init w h = do
     <*> pure texture
     <*> pure model
     <*> Terrain.mkProgram maxLights
-    <*> Terrain.mkTerrain 0 0 pack blendMap "res/heightmap.png"
-    <*> Terrain.mkTerrain 1 0 pack blendMap "res/heightmap.png"
+    <*> Terrain.load 0 0 pack blendMap "res/heightmap.png"
+    <*> Terrain.load 1 0 pack blendMap "res/heightmap.png"
+    <*> Skybox.mkProgram
+    <*> Skybox.load
+      [ "res/skybox/right.jpg"
+      , "res/skybox/left.jpg"
+      , "res/skybox/top.jpg"
+      , "res/skybox/bottom.jpg"
+      , "res/skybox/front.jpg"
+      , "res/skybox/back.jpg"
+      ]
     <*> pure (Linear.V3 0.5 0.5 0.5)
  where
   camera = Camera (Linear.V3 10 2 30) (Linear.V3 0 0 (-1)) (Linear.V3 0 1 0)
@@ -412,7 +425,16 @@ draw g = do
       glClearColor red green blue 1.0
       glClear $ GL_COLOR_BUFFER_BIT .|. GL_DEPTH_BUFFER_BIT
 
-  glUseProgram $ Terrain.tProgram $ gameTerrainProgram g
+  glDepthMask GL_FALSE
+  Skybox.use $ gameSkyboxProgram g
+  Skybox.setUniforms
+    (gameSkyboxProgram g)
+    (Linear.m33_to_m44 $ view ^. Linear._m33)
+    (gameProj g)
+  Skybox.draw $ gameSkybox g
+  glDepthMask GL_TRUE
+
+  Terrain.use $ gameTerrainProgram g
   Terrain.setUniforms
     (gameTerrain1 g)
     (gameTerrainProgram g)
