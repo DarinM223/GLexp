@@ -425,15 +425,6 @@ draw g = do
       glClearColor red green blue 1.0
       glClear $ GL_COLOR_BUFFER_BIT .|. GL_DEPTH_BUFFER_BIT
 
-  glDepthMask GL_FALSE
-  Skybox.use $ gameSkyboxProgram g
-  Skybox.setUniforms
-    (gameSkyboxProgram g)
-    (Linear.m33_to_m44 $ view ^. Linear._m33)
-    (gameProj g)
-  Skybox.draw $ gameSkybox g
-  glDepthMask GL_TRUE
-
   Terrain.use $ gameTerrainProgram g
   Terrain.setUniforms
     (gameTerrain1 g)
@@ -467,6 +458,15 @@ draw g = do
   drawEntities (gameProgram g) (gameGrasses g)
   drawEntities (gameProgram g) (gameFerns g)
   drawEntities (gameProgram g) (gameLamps g)
+
+  glDepthFunc GL_LEQUAL
+  Skybox.use $ gameSkyboxProgram g
+  Skybox.setUniforms
+    (gameSkyboxProgram g)
+    (Linear.m33_to_m44 $ view ^. Linear._m33)
+    (gameProj g)
+  Skybox.draw $ gameSkybox g
+  glDepthFunc GL_LESS
 
 drawEntities :: TexProgram -> IOVec Entity -> IO ()
 drawEntities p v = do

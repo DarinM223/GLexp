@@ -39,7 +39,8 @@ vertexShaderSrc = BS.pack
 
     void main() {
       v_texCoord = position;
-      gl_Position = projection * view * vec4(position, 1.0);
+      vec4 pos = projection * view * vec4(position, 1.0);
+      gl_Position = pos.xyww;
     }
   |]
 
@@ -201,3 +202,4 @@ draw s = do
   glBindVertexArray $ modelVao $ skyboxRawModel s
   glBindTexture GL_TEXTURE_CUBE_MAP $ skyboxTexture s
   glDrawArrays GL_TRIANGLES 0 36
+  glBindVertexArray 0
