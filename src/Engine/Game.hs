@@ -465,6 +465,7 @@ draw g = do
     (gameSkyboxProgram g)
     (Linear.m33_to_m44 $ view ^. Linear._m33)
     (gameProj g)
+    (gameSkyColor g)
   Skybox.draw $ gameSkybox g
   glDepthFunc GL_LESS
 

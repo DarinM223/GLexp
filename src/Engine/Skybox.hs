@@ -50,10 +50,18 @@ fragmentShaderSrc = BS.pack
     #version 330 core
     in vec3 v_texCoord;
     out vec4 color;
+
     uniform samplerCube skybox;
+    uniform vec3 skyColor;
+
+    const float lowerLimit = 0.0;
+    const float upperLimit = 40.0 / 100.0;
 
     void main() {
-      color = texture(skybox, v_texCoord);
+      vec4 finalColor = texture(skybox, v_texCoord);
+      float factor = (v_texCoord.y - lowerLimit) / (upperLimit - lowerLimit);
+      factor = clamp(factor, 0.0, 1.0);
+      color = mix(vec4(skyColor, 1.0), finalColor, factor);
     }
   |]
 
@@ -167,9 +175,10 @@ generateSkyboxModel = V.unsafeWith vertexBuffer $ \vPtr -> do
   stride = fromIntegral $ sizeOf (undefined :: GLfloat) * 3
 
 data SkyboxProgram = SkyboxProgram
-  { sProgram :: {-# UNPACK #-} !GLuint
-  , sViewLoc :: {-# UNPACK #-} !GLint
-  , sProjLoc :: {-# UNPACK #-} !GLint
+  { sProgram     :: {-# UNPACK #-} !GLuint
+  , sViewLoc     :: {-# UNPACK #-} !GLint
+  , sProjLoc     :: {-# UNPACK #-} !GLint
+  , sSkyColorLoc :: {-# UNPACK #-} !GLint
   }
 
 mkProgram :: IO SkyboxProgram
@@ -181,18 +190,25 @@ mkProgram =
       glGetUniformLocation sProgram name
     sProjLoc <- withCString "projection" $ \name ->
       glGetUniformLocation sProgram name
+    sSkyColorLoc <- withCString "skyColor" $ \name ->
+      glGetUniformLocation sProgram name
     return SkyboxProgram{..}
  where
   loadVertexShader = loadShader GL_VERTEX_SHADER vertexShaderSrc
   loadFragmentShader = loadShader GL_FRAGMENT_SHADER fragmentShaderSrc
 
 setUniforms
-  :: SkyboxProgram -> Linear.M44 GLfloat -> Linear.M44 GLfloat -> IO ()
-setUniforms p view proj = do
+  :: SkyboxProgram
+  -> Linear.M44 GLfloat
+  -> Linear.M44 GLfloat
+  -> Linear.V3 GLfloat
+  -> IO ()
+setUniforms p view proj (Linear.V3 r g b) = do
   with view $ \matrixPtr ->
     glUniformMatrix4fv (sViewLoc p) 1 GL_TRUE (castPtr matrixPtr)
   with proj $ \matrixPtr ->
     glUniformMatrix4fv (sProjLoc p) 1 GL_TRUE (castPtr matrixPtr)
+  glUniform3f (sSkyColorLoc p) r g b
 
 use :: SkyboxProgram -> IO ()
 use p = glUseProgram $ sProgram p
