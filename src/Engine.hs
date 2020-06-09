@@ -2,7 +2,8 @@
 module Engine (start) where
 
 import Control.Exception (Exception, bracket, throwIO)
-import Control.Monad (void)
+import Control.Monad (unless, void)
+import Data.Foldable (traverse_)
 import Data.IORef (IORef, modifyIORef, newIORef, readIORef)
 import Engine.Types (MouseInfo (..), updateMouseInfo)
 import Graphics.GL.Core45
@@ -20,19 +21,33 @@ data WindowParams = WindowParams
   , windowCursorCallback :: !GLFW.CursorPosCallback
   }
 
-keyPressed :: IORef (S.Set GLFW.Key) -> GLFW.KeyCallback
-keyPressed _ _ GLFW.Key'Escape _ GLFW.KeyState'Pressed _ =
+onKeyPressed :: IORef (S.Set GLFW.Key) -> GLFW.KeyCallback
+onKeyPressed _ _ GLFW.Key'Escape _ GLFW.KeyState'Pressed _ =
   throwIO CloseException
-keyPressed ref _ key _ keyState _ = case keyState of
+onKeyPressed ref _ key _ keyState _ = case keyState of
   GLFW.KeyState'Pressed  -> modifyIORef ref (S.insert key)
   GLFW.KeyState'Released -> modifyIORef ref (S.delete key)
   _                      -> return ()
 
-cursorMoved :: IORef MouseInfo -> GLFW.CursorPosCallback
-cursorMoved mouseInfoRef _ x y = modifyIORef mouseInfoRef $ updateMouseInfo x y
+onCursorMoved :: IORef MouseInfo -> GLFW.CursorPosCallback
+onCursorMoved mouseInfoRef _ x y = do
+  pressed <- mousePressed <$> readIORef mouseInfoRef
+  unless pressed $ modifyIORef mouseInfoRef $ updateMouseInfo x y
 
-mousePressed :: GLFW.MouseButtonCallback
-mousePressed _ _ _ _ = return ()
+onMousePressed :: IORef MouseInfo -> GLFW.MouseButtonCallback
+onMousePressed mouseInfoRef win GLFW.MouseButton'2 state _ = do
+  modifyIORef mouseInfoRef $ \info -> info { mousePressed = pressed }
+  if pressed
+    then GLFW.setCursorInputMode win GLFW.CursorInputMode'Normal
+    else do
+      GLFW.setCursorInputMode win GLFW.CursorInputMode'Disabled
+      lastPos <- mouseLastPos <$> readIORef mouseInfoRef
+      traverse_ (uncurry (GLFW.setCursorPos win)) lastPos
+ where
+  pressed = case state of
+    GLFW.MouseButtonState'Pressed  -> True
+    GLFW.MouseButtonState'Released -> False
+onMousePressed _ _ _ _ _ = return ()
 
 mkWindow :: WindowParams -> IO GLFW.Window
 mkWindow params = do
@@ -79,8 +94,11 @@ gameLoop keysRef mouseInfoRef window = do
 start :: IO ()
 start = do
   keysRef <- newIORef S.empty
-  mouseInfoRef <- newIORef $ MouseInfo Nothing (0, -90) (Linear.V3 0 0 (-1))
+  mouseInfoRef <- newIORef $
+    MouseInfo Nothing (0, -90) (Linear.V3 0 0 (-1)) False
   let
-    createWindow = mkWindow $
-      WindowParams (keyPressed keysRef) mousePressed (cursorMoved mouseInfoRef)
+    createWindow = mkWindow $ WindowParams
+      (onKeyPressed keysRef)
+      (onMousePressed mouseInfoRef)
+      (onCursorMoved mouseInfoRef)
   bracket createWindow freeWindow (gameLoop keysRef mouseInfoRef)

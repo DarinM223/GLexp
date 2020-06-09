@@ -15,10 +15,12 @@ data MouseInfo = MouseInfo
   { mouseLastPos     :: !(Maybe (Double, Double))
   , mouseOldPitchYaw :: {-# UNPACK #-} !(Double, Double)
   , mouseFront       :: {-# UNPACK #-} !(Linear.V3 GLfloat)
+  , mousePressed     :: !Bool
   }
 
 updateMouseInfo :: Double -> Double -> MouseInfo -> MouseInfo
-updateMouseInfo x y info = MouseInfo (Just (x, y)) (pitch, yaw) front
+updateMouseInfo x y info =
+  MouseInfo (Just (x, y)) (pitch, yaw) front (mousePressed info)
  where
   toRadians = realToFrac . (* (pi / 180))
 
