@@ -9,14 +9,15 @@ import Control.Monad (forM, forM_)
 import Control.Monad.Primitive (PrimState)
 import Data.Bits ((.|.))
 import Data.ByteString (ByteString)
-import Data.Foldable (foldlM)
+import Data.Foldable (foldlM, traverse_)
 import Data.List (zip4)
+import Engine.MousePicker (calculateMouseRay)
 import Engine.Types
 import Engine.Utils
 import Foreign.C.String (withCString)
 import Foreign.Marshal.Utils (with)
 import Foreign.Ptr (castPtr)
-import Graphics.GL.Core45
+import Graphics.GL.Compatibility45
 import Graphics.GL.Types
 import Linear ((!!*))
 import qualified Data.ByteString.Char8 as BS
@@ -247,7 +248,9 @@ programSetModel p model = with model $ \matrixPtr ->
   glUniformMatrix4fv (pModelLoc p) 1 GL_TRUE (castPtr matrixPtr)
 
 data Game = Game
-  { gameEntities       :: {-# UNPACK #-} !(IOVec Entity)
+  { gameWidth          :: {-# UNPACK #-} !GLfloat
+  , gameHeight         :: {-# UNPACK #-} !GLfloat
+  , gameEntities       :: {-# UNPACK #-} !(IOVec Entity)
   , gameGrasses        :: {-# UNPACK #-} !(IOVec Entity)
   , gameFerns          :: {-# UNPACK #-} !(IOVec Entity)
   , gameLamps          :: {-# UNPACK #-} !(IOVec Entity)
@@ -255,6 +258,7 @@ data Game = Game
   , gameCamera         :: {-# UNPACK #-} !Camera
   , gameProj           :: {-# UNPACK #-} !(Linear.M44 GLfloat)
   , gameLights         :: ![Light]
+  , gameLines          :: ![(Linear.V3 GLfloat, Linear.V3 GLfloat)]
   , gameTexture        :: {-# UNPACK #-} !Texture
   , gameRawModel       :: {-# UNPACK #-} !RawModel
   , gameTerrainProgram :: {-# UNPACK #-} !Terrain.TerrainProgram
@@ -358,7 +362,9 @@ init w h = do
     "res/grass.png" "res/mud.png" "res/grassFlowers.png" "res/path.png"
   blendMap <- loadTexture "res/blendMap.png"
   Game
-    <$> V.unsafeThaw (V.fromList initEntities)
+    <$> pure (fromIntegral w)
+    <*> pure (fromIntegral h)
+    <*> V.unsafeThaw (V.fromList initEntities)
     <*> V.unsafeThaw (V.fromList grassEntities)
     <*> V.unsafeThaw (V.fromList fernEntities)
     <*> V.unsafeThaw (V.fromList lampEntities)
@@ -366,6 +372,7 @@ init w h = do
     <*> pure camera
     <*> pure proj
     <*> pure [light1, light2, light3, light4]
+    <*> pure []
     <*> pure texture
     <*> pure model
     <*> Terrain.mkProgram maxLights
@@ -405,7 +412,7 @@ update keys mouseInfo dt g0 =
   terrainHeight = Terrain.heightAt cx cz (gameTerrain1 g0) + 1
   camera''' = camera'' { cameraPos = Linear.V3 cx terrainHeight cz }
 
-  g0' = g0 { gameCamera = camera''' }
+  g0' = handleLeftClick mouseInfo g0 { gameCamera = camera''' }
 
   update' :: Game -> Int -> IO Game
   update' !g i = do
@@ -415,6 +422,18 @@ update keys mouseInfo dt g0 =
         { entityRot = entityRot e * Linear.axisAngle (Linear.V3 0 1 0) 0.01 }
     VM.modify (gameEntities g) updateEntity i
     return g
+
+handleLeftClick :: MouseInfo -> Game -> Game
+handleLeftClick info g = case mouseLeftCoords info of
+  Just (x, y) ->
+    let ray = calculateMouseRay (realToFrac x) (realToFrac y) w h proj view
+    in g { gameLines = (cameraPos $ gameCamera g, ray):gameLines g }
+  _ -> g
+ where
+  w = gameWidth g
+  h = gameHeight g
+  proj = gameProj g
+  view = toViewMatrix $ gameCamera g
 
 draw :: Game -> IO ()
 draw g = do
@@ -458,6 +477,7 @@ draw g = do
   drawEntities (gameProgram g) (gameGrasses g)
   drawEntities (gameProgram g) (gameFerns g)
   drawEntities (gameProgram g) (gameLamps g)
+  drawLines $ gameLines g
 
   glDepthFunc GL_LEQUAL
   Skybox.use $ gameSkyboxProgram g
@@ -479,3 +499,18 @@ drawEntities p v = do
     glBindVertexArray $ modelVao $ entityModel e
     glDrawArrays GL_TRIANGLES 0 $ modelVertexCount $ entityModel e
     glBindVertexArray 0
+
+-- TODO(DarinM223): Doesn't properly draw lines,
+-- so fix this or remove this eventually.
+drawLines :: [(Linear.V3 GLfloat, Linear.V3 GLfloat)] -> IO ()
+drawLines ls = do
+  glLineWidth 100
+  glColor3f 1.0 1.0 0.0
+  glBegin GL_LINES
+  traverse_ (uncurry drawLine) ls
+  glEnd
+ where
+  size = 1000000
+  drawLine (Linear.V3 ox oy oz) (Linear.V3 dx dy dz) = do
+    glVertex3f ox oy oz
+    glVertex3f (ox + dx * size) (oy + dy * size) (oz + dz * size)

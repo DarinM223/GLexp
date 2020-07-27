@@ -9,7 +9,6 @@ module Engine.Utils
   , linkShaders
   , loadVAO
   , loadObj
-  , toViewMatrix
   ) where
 
 import Codec.Picture

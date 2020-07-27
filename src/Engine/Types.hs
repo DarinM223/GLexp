@@ -12,15 +12,19 @@ import qualified Graphics.UI.GLFW as GLFW
 import qualified Linear
 
 data MouseInfo = MouseInfo
-  { mouseLastPos     :: !(Maybe (Double, Double))
-  , mouseOldPitchYaw :: {-# UNPACK #-} !(Double, Double)
-  , mouseFront       :: {-# UNPACK #-} !(Linear.V3 GLfloat)
-  , mousePressed     :: !Bool
+  { mouseLastPos      :: !(Maybe (Double, Double))
+  , mouseOldPitchYaw  :: {-# UNPACK #-} !(Double, Double)
+  , mouseFront        :: {-# UNPACK #-} !(Linear.V3 GLfloat)
+  , mouseRightPressed :: !Bool
+  , mouseLeftCoords   :: !(Maybe (Double, Double))
   }
 
 updateMouseInfo :: Double -> Double -> MouseInfo -> MouseInfo
-updateMouseInfo x y info =
-  MouseInfo (Just (x, y)) (pitch, yaw) front (mousePressed info)
+updateMouseInfo x y info = info
+  { mouseLastPos     = Just (x, y)
+  , mouseOldPitchYaw = (pitch, yaw)
+  , mouseFront       = front
+  }
  where
   toRadians = realToFrac . (* (pi / 180))
 
