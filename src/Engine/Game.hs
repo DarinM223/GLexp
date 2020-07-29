@@ -9,7 +9,7 @@ import Control.Monad (forM, forM_)
 import Control.Monad.Primitive (PrimState)
 import Data.Bits ((.|.))
 import Data.ByteString (ByteString)
-import Data.Foldable (foldlM, traverse_)
+import Data.Foldable (foldlM)
 import Data.List (zip4)
 import Engine.MousePicker (calculateMouseRay)
 import Engine.Types
@@ -17,7 +17,7 @@ import Engine.Utils
 import Foreign.C.String (withCString)
 import Foreign.Marshal.Utils (with)
 import Foreign.Ptr (castPtr)
-import Graphics.GL.Compatibility45
+import Graphics.GL.Core45
 import Graphics.GL.Types
 import Linear ((!!*))
 import qualified Data.ByteString.Char8 as BS
@@ -460,6 +460,7 @@ draw g = do
     (gameProgram g) (gameLights g) (gameSkyColor g) view (gameProj g)
   programSetTexture (gameProgram g) (gameTexture g)
 
+  glBindVertexArray $ modelVao $ gameRawModel g
   forM_ [0..VM.length (gameEntities g) - 1] $ \i -> do
     e <- VM.read (gameEntities g) i
 
@@ -468,12 +469,11 @@ draw g = do
     programSetModel (gameProgram g) matrix
     programSetOffset (gameProgram g) (textureXOffset e) (textureYOffset e)
 
-    glBindVertexArray $ modelVao $ gameRawModel g
     glDrawArrays GL_TRIANGLES 0 $ modelVertexCount $ gameRawModel g
     -- TODO(DarinM223): Use this when drawing with index buffer.
     --glDrawElements
     --  GL_TRIANGLES (Utils.modelVertexCount model) GL_UNSIGNED_INT nullPtr
-    glBindVertexArray 0
+  glBindVertexArray 0
   drawEntities (gameProgram g) (gameGrasses g)
   drawEntities (gameProgram g) (gameFerns g)
   drawEntities (gameProgram g) (gameLamps g)
@@ -491,26 +491,30 @@ draw g = do
 
 drawEntities :: TexProgram -> IOVec Entity -> IO ()
 drawEntities p v = do
-  VM.read v 0 >>= programSetTexture p . entityTex
+  e0 <- VM.read v 0
+  programSetTexture p $ entityTex e0
+  glBindVertexArray $ modelVao $ entityModel e0
   forM_ [0..VM.length v - 1] $ \i -> do
     e <- VM.read v i
     programSetModel p (Linear.mkTransformationMat Linear.identity (entityPos e))
     programSetOffset p (textureXOffset e) (textureYOffset e)
-    glBindVertexArray $ modelVao $ entityModel e
     glDrawArrays GL_TRIANGLES 0 $ modelVertexCount $ entityModel e
-    glBindVertexArray 0
+  glBindVertexArray 0
 
 -- TODO(DarinM223): Doesn't properly draw lines,
 -- so fix this or remove this eventually.
 drawLines :: [(Linear.V3 GLfloat, Linear.V3 GLfloat)] -> IO ()
-drawLines ls = do
-  glLineWidth 100
-  glColor3f 1.0 1.0 0.0
-  glBegin GL_LINES
-  traverse_ (uncurry drawLine) ls
-  glEnd
- where
-  size = 1000000
-  drawLine (Linear.V3 ox oy oz) (Linear.V3 dx dy dz) = do
-    glVertex3f ox oy oz
-    glVertex3f (ox + dx * size) (oy + dy * size) (oz + dz * size)
+drawLines _ = return ()
+-- drawLines ls = do
+--   err <- glGetError
+--   putStrLn $ errorString err
+--   glBegin GL_LINES
+--   -- glLineWidth 100
+--   -- glColor3f 1.0 1.0 0.0
+--   traverse_ (uncurry drawLine) ls
+--   glEnd
+--  where
+--   size = 10000
+--   drawLine (Linear.V3 ox oy oz) (Linear.V3 dx dy dz) = do
+--     glVertex3f ox oy oz
+--     glVertex3f (ox + dx * size) (oy + dy * size) (oz + dz * size)
