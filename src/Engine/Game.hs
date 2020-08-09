@@ -258,7 +258,8 @@ data Game = Game
   , gameCamera         :: {-# UNPACK #-} !Camera
   , gameProj           :: {-# UNPACK #-} !(Linear.M44 GLfloat)
   , gameLights         :: ![Light]
-  , gameLines          :: ![(Linear.V3 GLfloat, Linear.V3 GLfloat)]
+  -- TODO(DarinM223): replace with fixed IOVec Projectile
+  , gameProjectiles    :: ![Projectile]
   , gameTexture        :: {-# UNPACK #-} !Texture
   , gameRawModel       :: {-# UNPACK #-} !RawModel
   , gameTerrainProgram :: {-# UNPACK #-} !Terrain.TerrainProgram
@@ -402,7 +403,7 @@ init w h = do
 
 update :: S.Set GLFW.Key -> MouseInfo -> GLfloat -> Game -> IO Game
 update keys mouseInfo dt g0 =
-  foldlM update' g0' [0..VM.length (gameEntities g0') - 1]
+  updateProjectiles <$> foldlM update' g0' [0..VM.length (gameEntities g0') - 1]
  where
   camera' = (gameCamera g0) { cameraFront = mouseFront mouseInfo }
   camera'' = updateCamera keys (30 * dt) camera'
@@ -423,11 +424,28 @@ update keys mouseInfo dt g0 =
     VM.modify (gameEntities g) updateEntity i
     return g
 
+  updateProjectiles :: Game -> Game
+  updateProjectiles g =
+    g { gameProjectiles = fmap updateProjectile (gameProjectiles g) }
+   where
+    updateProjectile p = p { projectileEntity = e' }
+     where
+      e = projectileEntity p
+      e' = e { entityPos = entityPos e + projectileRay p }
+
 handleLeftClick :: MouseInfo -> Game -> Game
 handleLeftClick info g = case mouseLeftCoords info of
   Just (x, y) ->
-    let ray = calculateMouseRay (realToFrac x) (realToFrac y) w h proj view
-    in g { gameLines = (cameraPos $ gameCamera g, ray):gameLines g }
+    let
+      ray    = calculateMouseRay (realToFrac x) (realToFrac y) w h proj view
+      bullet = Projectile ray $ Entity
+        (cameraPos $ gameCamera g)
+        (Linear.axisAngle (Linear.V3 (0.0 :: GLfloat) 0.0 1.0) 0)
+        0.1
+        (gameTexture g)
+        (gameRawModel g)
+        0
+    in g { gameProjectiles = bullet:gameProjectiles g }
   _ -> g
  where
   w = gameWidth g
@@ -473,11 +491,19 @@ draw g = do
     -- TODO(DarinM223): Use this when drawing with index buffer.
     --glDrawElements
     --  GL_TRIANGLES (Utils.modelVertexCount model) GL_UNSIGNED_INT nullPtr
+  forM_ (gameProjectiles g) $ \bullet -> do
+    let e      = projectileEntity bullet
+        rotM33 = Linear.fromQuaternion (entityRot e) !!* entityScale e
+        matrix = Linear.mkTransformationMat rotM33 (entityPos e)
+    programSetModel (gameProgram g) matrix
+    programSetOffset (gameProgram g) (textureXOffset e) (textureYOffset e)
+
+    glDrawArrays GL_TRIANGLES 0 $ modelVertexCount $ gameRawModel g
+
   glBindVertexArray 0
   drawEntities (gameProgram g) (gameGrasses g)
   drawEntities (gameProgram g) (gameFerns g)
   drawEntities (gameProgram g) (gameLamps g)
-  drawLines $ gameLines g
 
   glDepthFunc GL_LEQUAL
   Skybox.use $ gameSkyboxProgram g
@@ -500,21 +526,3 @@ drawEntities p v = do
     programSetOffset p (textureXOffset e) (textureYOffset e)
     glDrawArrays GL_TRIANGLES 0 $ modelVertexCount $ entityModel e
   glBindVertexArray 0
-
--- TODO(DarinM223): Doesn't properly draw lines,
--- so fix this or remove this eventually.
-drawLines :: [(Linear.V3 GLfloat, Linear.V3 GLfloat)] -> IO ()
-drawLines _ = return ()
--- drawLines ls = do
---   err <- glGetError
---   putStrLn $ errorString err
---   glBegin GL_LINES
---   -- glLineWidth 100
---   -- glColor3f 1.0 1.0 0.0
---   traverse_ (uncurry drawLine) ls
---   glEnd
---  where
---   size = 10000
---   drawLine (Linear.V3 ox oy oz) (Linear.V3 dx dy dz) = do
---     glVertex3f ox oy oz
---     glVertex3f (ox + dx * size) (oy + dy * size) (oz + dz * size)
