@@ -11,6 +11,7 @@ import Data.Bits ((.|.))
 import Data.ByteString (ByteString)
 import Data.Foldable (foldlM)
 import Data.List (zip4)
+import Engine.MousePicker (calculateMouseRay)
 import Engine.Types
 import Engine.Utils
 import Foreign.C.String (withCString)
@@ -247,7 +248,9 @@ programSetModel p model = with model $ \matrixPtr ->
   glUniformMatrix4fv (pModelLoc p) 1 GL_TRUE (castPtr matrixPtr)
 
 data Game = Game
-  { gameEntities       :: {-# UNPACK #-} !(IOVec Entity)
+  { gameWidth          :: {-# UNPACK #-} !GLfloat
+  , gameHeight         :: {-# UNPACK #-} !GLfloat
+  , gameEntities       :: {-# UNPACK #-} !(IOVec Entity)
   , gameGrasses        :: {-# UNPACK #-} !(IOVec Entity)
   , gameFerns          :: {-# UNPACK #-} !(IOVec Entity)
   , gameLamps          :: {-# UNPACK #-} !(IOVec Entity)
@@ -255,6 +258,8 @@ data Game = Game
   , gameCamera         :: {-# UNPACK #-} !Camera
   , gameProj           :: {-# UNPACK #-} !(Linear.M44 GLfloat)
   , gameLights         :: ![Light]
+  -- TODO(DarinM223): replace with fixed IOVec Projectile
+  , gameProjectiles    :: ![Projectile]
   , gameTexture        :: {-# UNPACK #-} !Texture
   , gameRawModel       :: {-# UNPACK #-} !RawModel
   , gameTerrainProgram :: {-# UNPACK #-} !Terrain.TerrainProgram
@@ -358,7 +363,9 @@ init w h = do
     "res/grass.png" "res/mud.png" "res/grassFlowers.png" "res/path.png"
   blendMap <- loadTexture "res/blendMap.png"
   Game
-    <$> V.unsafeThaw (V.fromList initEntities)
+    <$> pure (fromIntegral w)
+    <*> pure (fromIntegral h)
+    <*> V.unsafeThaw (V.fromList initEntities)
     <*> V.unsafeThaw (V.fromList grassEntities)
     <*> V.unsafeThaw (V.fromList fernEntities)
     <*> V.unsafeThaw (V.fromList lampEntities)
@@ -366,6 +373,7 @@ init w h = do
     <*> pure camera
     <*> pure proj
     <*> pure [light1, light2, light3, light4]
+    <*> pure []
     <*> pure texture
     <*> pure model
     <*> Terrain.mkProgram maxLights
@@ -395,7 +403,7 @@ init w h = do
 
 update :: S.Set GLFW.Key -> MouseInfo -> GLfloat -> Game -> IO Game
 update keys mouseInfo dt g0 =
-  foldlM update' g0' [0..VM.length (gameEntities g0') - 1]
+  updateProjectiles <$> foldlM update' g0' [0..VM.length (gameEntities g0') - 1]
  where
   camera' = (gameCamera g0) { cameraFront = mouseFront mouseInfo }
   camera'' = updateCamera keys (30 * dt) camera'
@@ -405,7 +413,7 @@ update keys mouseInfo dt g0 =
   terrainHeight = Terrain.heightAt cx cz (gameTerrain1 g0) + 1
   camera''' = camera'' { cameraPos = Linear.V3 cx terrainHeight cz }
 
-  g0' = g0 { gameCamera = camera''' }
+  g0' = handleLeftClick mouseInfo g0 { gameCamera = camera''' }
 
   update' :: Game -> Int -> IO Game
   update' !g i = do
@@ -415,6 +423,35 @@ update keys mouseInfo dt g0 =
         { entityRot = entityRot e * Linear.axisAngle (Linear.V3 0 1 0) 0.01 }
     VM.modify (gameEntities g) updateEntity i
     return g
+
+  updateProjectiles :: Game -> Game
+  updateProjectiles g =
+    g { gameProjectiles = fmap updateProjectile (gameProjectiles g) }
+   where
+    updateProjectile p = p { projectileEntity = e' }
+     where
+      e = projectileEntity p
+      e' = e { entityPos = entityPos e + projectileRay p }
+
+handleLeftClick :: MouseInfo -> Game -> Game
+handleLeftClick info g = case mouseLeftCoords info of
+  Just (x, y) ->
+    let
+      ray    = calculateMouseRay (realToFrac x) (realToFrac y) w h proj view
+      bullet = Projectile ray $ Entity
+        (cameraPos $ gameCamera g)
+        (Linear.axisAngle (Linear.V3 (0.0 :: GLfloat) 0.0 1.0) 0)
+        0.1
+        (gameTexture g)
+        (gameRawModel g)
+        0
+    in g { gameProjectiles = bullet:gameProjectiles g }
+  _ -> g
+ where
+  w = gameWidth g
+  h = gameHeight g
+  proj = gameProj g
+  view = toViewMatrix $ gameCamera g
 
 draw :: Game -> IO ()
 draw g = do
@@ -441,6 +478,7 @@ draw g = do
     (gameProgram g) (gameLights g) (gameSkyColor g) view (gameProj g)
   programSetTexture (gameProgram g) (gameTexture g)
 
+  glBindVertexArray $ modelVao $ gameRawModel g
   forM_ [0..VM.length (gameEntities g) - 1] $ \i -> do
     e <- VM.read (gameEntities g) i
 
@@ -449,12 +487,20 @@ draw g = do
     programSetModel (gameProgram g) matrix
     programSetOffset (gameProgram g) (textureXOffset e) (textureYOffset e)
 
-    glBindVertexArray $ modelVao $ gameRawModel g
     glDrawArrays GL_TRIANGLES 0 $ modelVertexCount $ gameRawModel g
     -- TODO(DarinM223): Use this when drawing with index buffer.
     --glDrawElements
     --  GL_TRIANGLES (Utils.modelVertexCount model) GL_UNSIGNED_INT nullPtr
-    glBindVertexArray 0
+  forM_ (gameProjectiles g) $ \bullet -> do
+    let e      = projectileEntity bullet
+        rotM33 = Linear.fromQuaternion (entityRot e) !!* entityScale e
+        matrix = Linear.mkTransformationMat rotM33 (entityPos e)
+    programSetModel (gameProgram g) matrix
+    programSetOffset (gameProgram g) (textureXOffset e) (textureYOffset e)
+
+    glDrawArrays GL_TRIANGLES 0 $ modelVertexCount $ gameRawModel g
+
+  glBindVertexArray 0
   drawEntities (gameProgram g) (gameGrasses g)
   drawEntities (gameProgram g) (gameFerns g)
   drawEntities (gameProgram g) (gameLamps g)
@@ -471,11 +517,12 @@ draw g = do
 
 drawEntities :: TexProgram -> IOVec Entity -> IO ()
 drawEntities p v = do
-  VM.read v 0 >>= programSetTexture p . entityTex
+  e0 <- VM.read v 0
+  programSetTexture p $ entityTex e0
+  glBindVertexArray $ modelVao $ entityModel e0
   forM_ [0..VM.length v - 1] $ \i -> do
     e <- VM.read v i
     programSetModel p (Linear.mkTransformationMat Linear.identity (entityPos e))
     programSetOffset p (textureXOffset e) (textureYOffset e)
-    glBindVertexArray $ modelVao $ entityModel e
     glDrawArrays GL_TRIANGLES 0 $ modelVertexCount $ entityModel e
-    glBindVertexArray 0
+  glBindVertexArray 0

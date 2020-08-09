@@ -2,9 +2,10 @@
 module Engine (start) where
 
 import Control.Exception (Exception, bracket, throwIO)
-import Control.Monad (unless, void)
+import Control.Monad (unless, void, when)
 import Data.Foldable (traverse_)
 import Data.IORef (IORef, modifyIORef, newIORef, readIORef)
+import Data.Maybe (isJust)
 import Engine.Types (MouseInfo (..), updateMouseInfo)
 import Graphics.GL.Core45
 import qualified Data.Set as S
@@ -31,12 +32,12 @@ onKeyPressed ref _ key _ keyState _ = case keyState of
 
 onCursorMoved :: IORef MouseInfo -> GLFW.CursorPosCallback
 onCursorMoved mouseInfoRef _ x y = do
-  pressed <- mousePressed <$> readIORef mouseInfoRef
+  pressed <- mouseRightPressed <$> readIORef mouseInfoRef
   unless pressed $ modifyIORef mouseInfoRef $ updateMouseInfo x y
 
 onMousePressed :: IORef MouseInfo -> GLFW.MouseButtonCallback
 onMousePressed mouseInfoRef win GLFW.MouseButton'2 state _ = do
-  modifyIORef mouseInfoRef $ \info -> info { mousePressed = pressed }
+  modifyIORef mouseInfoRef $ \info -> info { mouseRightPressed = pressed }
   if pressed
     then GLFW.setCursorInputMode win GLFW.CursorInputMode'Normal
     else do
@@ -47,6 +48,11 @@ onMousePressed mouseInfoRef win GLFW.MouseButton'2 state _ = do
   pressed = case state of
     GLFW.MouseButtonState'Pressed  -> True
     GLFW.MouseButtonState'Released -> False
+onMousePressed ref win GLFW.MouseButton'1 GLFW.MouseButtonState'Pressed _ = do
+  rightButtonClicked <- mouseRightPressed <$> readIORef ref
+  when rightButtonClicked $ do
+    coords <- GLFW.getCursorPos win
+    modifyIORef ref $ \info -> info { mouseLeftCoords = Just coords }
 onMousePressed _ _ _ _ _ = return ()
 
 mkWindow :: WindowParams -> IO GLFW.Window
@@ -85,6 +91,10 @@ gameLoop keysRef mouseInfoRef window = do
         mouseInfo <- readIORef mouseInfoRef
         game' <- Game.update keys mouseInfo dt game
 
+        -- Handle left button event only once.
+        when (isJust $ mouseLeftCoords mouseInfo) $
+          modifyIORef mouseInfoRef $ \info -> info { mouseLeftCoords = Nothing }
+
         Game.draw game'
 
         GLFW.swapBuffers window
@@ -95,7 +105,7 @@ start :: IO ()
 start = do
   keysRef <- newIORef S.empty
   mouseInfoRef <- newIORef $
-    MouseInfo Nothing (0, -90) (Linear.V3 0 0 (-1)) False
+    MouseInfo Nothing (0, -90) (Linear.V3 0 0 (-1)) False Nothing
   let
     createWindow = mkWindow $ WindowParams
       (onKeyPressed keysRef)
