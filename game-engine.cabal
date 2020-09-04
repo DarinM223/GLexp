@@ -29,6 +29,7 @@ common opts
 library
   import:              opts
   exposed-modules:     Engine
+                     , Engine.FixedArray
                      , Engine.Game
                      , Engine.MousePicker
                      , Engine.Skybox
