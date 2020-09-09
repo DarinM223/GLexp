@@ -45,12 +45,16 @@ data Array m a = Array
   , arrayEnd   :: {-# UNPACK #-} !Int
   }
 
+instance Show (Array m a) where
+  show arr = "Array top: " ++ show (arrayTop arr)
+          ++ " end: " ++ show (arrayEnd arr)
+
 new :: (PrimMonad m, VM.Storable a) => Int -> m (Array m a)
-new size = Array <$> VM.new (size + 1) <*> pure 0 <*> pure 1
+new size = Array <$> VM.new (size + 1) <*> pure (-1) <*> pure 1
 
 add :: (PrimMonad m, VM.Storable a) => Array m a -> a -> m (Array m a)
 add arr v
-  | arrayTop arr == 0 =
+  | arrayTop arr == -1 =
     if arrayEnd arr == VM.length (arrayStore arr)
       then pure arr
       else VM.write (arrayStore arr) (arrayEnd arr) e
@@ -82,7 +86,7 @@ indexes arr = [1..arrayEnd arr - 1]
 forM_ :: (PrimMonad m, VM.Storable a) => Array m a -> (Int -> a -> m ()) -> m ()
 forM_ arr f = M.forM_ (indexes arr) $ \i -> do
   e <- read arr i
-  M.unless (nextFree e > 0) $ f i (arrayElem e)
+  M.unless (nextFree e /= 0) $ f i (arrayElem e)
 
 foldlM :: (PrimMonad m, VM.Storable a)
        => (b -> Int -> a -> m b) -> b -> Array m a -> m b
@@ -90,6 +94,6 @@ foldlM f init arr = F.foldlM f' init (indexes arr)
  where
   f' v i = do
     e <- read arr i
-    if nextFree e > 0
+    if nextFree e /= 0
       then pure v
       else f v i (arrayElem e)
