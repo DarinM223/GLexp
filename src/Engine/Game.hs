@@ -5,7 +5,7 @@ module Engine.Game where
 
 import Control.Exception (bracket)
 import Control.Lens ((^.))
-import Control.Monad (forM, forM_)
+import Control.Monad ((>=>), forM, forM_)
 import Control.Monad.Primitive (PrimState)
 import Data.Bits ((.|.))
 import Data.ByteString (ByteString)
@@ -24,6 +24,7 @@ import qualified Data.ByteString.Char8 as BS
 import qualified Data.Set as S
 import qualified Data.Vector.Storable as V
 import qualified Data.Vector.Storable.Mutable as VM
+import qualified Engine.FixedArray as FixedArray
 import qualified Engine.Skybox as Skybox
 import qualified Engine.Terrain.Terrain as Terrain
 import qualified Graphics.UI.GLFW as GLFW
@@ -258,8 +259,7 @@ data Game = Game
   , gameCamera         :: {-# UNPACK #-} !Camera
   , gameProj           :: {-# UNPACK #-} !(Linear.M44 GLfloat)
   , gameLights         :: ![Light]
-  -- TODO(DarinM223): replace with fixed IOVec Projectile
-  , gameProjectiles    :: ![Projectile]
+  , gameProjectiles    :: {-# UNPACK #-} !(FixedArray.Array IO Projectile)
   , gameTexture        :: {-# UNPACK #-} !Texture
   , gameRawModel       :: {-# UNPACK #-} !RawModel
   , gameTerrainProgram :: {-# UNPACK #-} !Terrain.TerrainProgram
@@ -373,7 +373,7 @@ init w h = do
     <*> pure camera
     <*> pure proj
     <*> pure [light1, light2, light3, light4]
-    <*> pure []
+    <*> FixedArray.new 100
     <*> pure texture
     <*> pure model
     <*> Terrain.mkProgram maxLights
@@ -403,7 +403,8 @@ init w h = do
 
 update :: S.Set GLFW.Key -> MouseInfo -> GLfloat -> Game -> IO Game
 update keys mouseInfo dt g0 =
-  updateProjectiles <$> foldlM update' g0' [0..VM.length (gameEntities g0') - 1]
+  foldlM update' g0' [0..VM.length (gameEntities g0') - 1] >>=
+    (handleLeftClick mouseInfo >=> updateProjectiles)
  where
   camera' = (gameCamera g0) { cameraFront = mouseFront mouseInfo }
   camera'' = updateCamera keys (30 * dt) camera'
@@ -413,7 +414,7 @@ update keys mouseInfo dt g0 =
   terrainHeight = Terrain.heightAt cx cz (gameTerrain1 g0) + 1
   camera''' = camera'' { cameraPos = Linear.V3 cx terrainHeight cz }
 
-  g0' = handleLeftClick mouseInfo g0 { gameCamera = camera''' }
+  g0' = g0 { gameCamera = camera''' }
 
   update' :: Game -> Int -> IO Game
   update' !g i = do
@@ -424,30 +425,37 @@ update keys mouseInfo dt g0 =
     VM.modify (gameEntities g) updateEntity i
     return g
 
-  updateProjectiles :: Game -> Game
-  updateProjectiles g =
-    g { gameProjectiles = fmap updateProjectile (gameProjectiles g) }
-   where
-    updateProjectile p = p { projectileEntity = e' }
-     where
-      e = projectileEntity p
-      e' = e { entityPos = entityPos e + projectileRay p }
+updateProjectiles :: Game -> IO Game
+updateProjectiles g
+  =   (\ps' -> g { gameProjectiles = ps' })
+  <$> FixedArray.foldlM updateProjectile ps ps
+ where
+  ps = gameProjectiles g
+  updateProjectile ps' i p = do
+    let e  = projectileEntity p
+        e' = e { entityPos = entityPos e + projectileRay p }
+    FixedArray.write ps' i p
+      { projectileEntity = e', projectileLife = projectileLife p - 1 }
+    if projectileLife p - 1 < 0
+      then FixedArray.delete ps' i
+      else pure ps'
 
-handleLeftClick :: MouseInfo -> Game -> Game
+handleLeftClick :: MouseInfo -> Game -> IO Game
 handleLeftClick info g = case mouseLeftCoords info of
   Just (x, y) ->
     let
       ray    = calculateMouseRay (realToFrac x) (realToFrac y) w h proj view
-      bullet = Projectile ray $ Entity
+      bullet = Projectile 100 ray $ Entity
         (cameraPos $ gameCamera g)
         (Linear.axisAngle (Linear.V3 (0.0 :: GLfloat) 0.0 1.0) 0)
         0.1
         (gameTexture g)
         (gameRawModel g)
         0
-    in g { gameProjectiles = bullet:gameProjectiles g }
-  _ -> g
+    in setProjectiles g <$> FixedArray.add (gameProjectiles g) bullet
+  _ -> pure g
  where
+  setProjectiles g' p = g' { gameProjectiles = p }
   w = gameWidth g
   h = gameHeight g
   proj = gameProj g
@@ -491,16 +499,16 @@ draw g = do
     -- TODO(DarinM223): Use this when drawing with index buffer.
     --glDrawElements
     --  GL_TRIANGLES (Utils.modelVertexCount model) GL_UNSIGNED_INT nullPtr
-  forM_ (gameProjectiles g) $ \bullet -> do
-    let e      = projectileEntity bullet
+  FixedArray.forM_ (gameProjectiles g) $ \_ p -> do
+    let e      = projectileEntity p
         rotM33 = Linear.fromQuaternion (entityRot e) !!* entityScale e
         matrix = Linear.mkTransformationMat rotM33 (entityPos e)
     programSetModel (gameProgram g) matrix
     programSetOffset (gameProgram g) (textureXOffset e) (textureYOffset e)
 
     glDrawArrays GL_TRIANGLES 0 $ modelVertexCount $ gameRawModel g
-
   glBindVertexArray 0
+
   drawEntities (gameProgram g) (gameGrasses g)
   drawEntities (gameProgram g) (gameFerns g)
   drawEntities (gameProgram g) (gameLamps g)

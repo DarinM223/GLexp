@@ -110,12 +110,6 @@ data Entity = Entity
   } deriving Show
 $(deriveStorable ''Entity)
 
-data Projectile = Projectile
-  { projectileRay    :: {-# UNPACK #-} !(Linear.V3 GLfloat)
-  , projectileEntity :: {-# UNPACK #-} !Entity
-  }
-$(deriveStorable ''Projectile)
-
 textureXOffset :: Entity -> GLfloat
 textureXOffset e = column / fromIntegral (textureNumRows (entityTex e))
  where column = fromIntegral $ entityTexIdx e `rem` textureNumRows (entityTex e)
@@ -123,6 +117,13 @@ textureXOffset e = column / fromIntegral (textureNumRows (entityTex e))
 textureYOffset :: Entity -> GLfloat
 textureYOffset e = row / fromIntegral (textureNumRows (entityTex e))
  where row = fromIntegral $ entityTexIdx e `quot` textureNumRows (entityTex e)
+
+data Projectile = Projectile
+  { projectileLife     :: {-# UNPACK #-} !Int
+  , projectileRay      :: {-# UNPACK #-} !(Linear.V3 GLfloat)
+  , projectileEntity   :: {-# UNPACK #-} !Entity
+  }
+$(deriveStorable ''Projectile)
 
 data TexturePack = TexturePack
   { packBackground :: {-# UNPACK #-} !Texture
