@@ -8,6 +8,7 @@ module Engine.Utils
   , loadTexturePack
   , linkShaders
   , loadVAO
+  , loadVAOWithIndices
   , loadObj
   ) where
 
@@ -40,11 +41,35 @@ perspectiveMat width height =
   nearPlane = 0.1
   farPlane = 1000
 
-loadVAO :: V.Vector GLfloat -- ^ Positions
-        -> V.Vector GLuint  -- ^ Indices
-        -> IO RawModel
-loadVAO v e = V.unsafeWith v $ \vPtr ->
-              V.unsafeWith e $ \ePtr -> do
+loadVAO :: V.Vector GLfloat -> Int -> IO RawModel
+loadVAO v n = V.unsafeWith v $ \vPtr -> do
+  vao <- alloca $ \vaoPtr -> do
+    glGenVertexArrays 1 vaoPtr
+    peek vaoPtr
+  glBindVertexArray vao
+  vbo <- alloca $ \vboPtr -> do
+    glGenBuffers 1 vboPtr
+    peek vboPtr
+  glBindBuffer GL_ARRAY_BUFFER vbo
+  glBufferData GL_ARRAY_BUFFER vSize (castPtr vPtr) GL_STATIC_DRAW
+
+  glVertexAttribPointer 0 (fromIntegral n) GL_FLOAT GL_FALSE stride nullPtr
+  glEnableVertexAttribArray 0
+
+  glBindBuffer GL_ARRAY_BUFFER 0
+  glBindVertexArray 0
+  return RawModel { modelVao         = vao
+                  , modelVertexCount = fromIntegral $ V.length v `quot` n
+                  }
+ where
+  vSize = fromIntegral $ sizeOf (undefined :: GLfloat) * V.length v
+  stride = fromIntegral $ sizeOf (undefined :: GLfloat) * n
+
+loadVAOWithIndices :: V.Vector GLfloat -- ^ Positions
+                   -> V.Vector GLuint  -- ^ Indices
+                   -> IO RawModel
+loadVAOWithIndices v e = V.unsafeWith v $ \vPtr ->
+                         V.unsafeWith e $ \ePtr -> do
   vao <- alloca $ \vaoPtr -> do
     glGenVertexArrays 1 vaoPtr
     peek vaoPtr

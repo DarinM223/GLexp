@@ -125,6 +125,13 @@ data Projectile = Projectile
   }
 $(deriveStorable ''Projectile)
 
+data WaterTile = WaterTile
+  { tileX      :: {-# UNPACK #-} !GLfloat
+  , tileZ      :: {-# UNPACK #-} !GLfloat
+  , tileHeight :: {-# UNPACK #-} !GLfloat
+  }
+$(deriveStorable ''WaterTile)
+
 data TexturePack = TexturePack
   { packBackground :: {-# UNPACK #-} !Texture
   , packR          :: {-# UNPACK #-} !Texture

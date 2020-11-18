@@ -27,6 +27,7 @@ import qualified Data.Vector.Storable.Mutable as VM
 import qualified Engine.FixedArray as FixedArray
 import qualified Engine.Skybox as Skybox
 import qualified Engine.Terrain.Terrain as Terrain
+import qualified Engine.Water.Water as Water
 import qualified Graphics.UI.GLFW as GLFW
 import qualified Linear
 import qualified Text.RawString.QQ as QQ
@@ -255,6 +256,7 @@ data Game = Game
   , gameGrasses        :: {-# UNPACK #-} !(IOVec Entity)
   , gameFerns          :: {-# UNPACK #-} !(IOVec Entity)
   , gameLamps          :: {-# UNPACK #-} !(IOVec Entity)
+  , gameWaterTiles     :: {-# UNPACK #-} !(IOVec WaterTile)
   , gameProgram        :: {-# UNPACK #-} !TexProgram
   , gameCamera         :: {-# UNPACK #-} !Camera
   , gameProj           :: {-# UNPACK #-} !(Linear.M44 GLfloat)
@@ -267,6 +269,8 @@ data Game = Game
   , gameTerrain2       :: {-# UNPACK #-} !Terrain.Terrain
   , gameSkyboxProgram  :: {-# UNPACK #-} !Skybox.SkyboxProgram
   , gameSkybox         :: {-# UNPACK #-} !Skybox.Skybox
+  , gameWaterProgram   :: {-# UNPACK #-} !Water.WaterProgram
+  , gameWater          :: {-# UNPACK #-} !Water.Water
   , gameSkyColor       :: {-# UNPACK #-} !(Linear.V3 GLfloat)
   }
 
@@ -359,6 +363,7 @@ init w h = do
         lampModel
         0
       ]
+    waterTiles = [WaterTile 60 60 (-8)]
   pack <- loadTexturePack
     "res/grass.png" "res/mud.png" "res/grassFlowers.png" "res/path.png"
   blendMap <- loadTexture "res/blendMap.png"
@@ -369,6 +374,7 @@ init w h = do
     <*> V.unsafeThaw (V.fromList grassEntities)
     <*> V.unsafeThaw (V.fromList fernEntities)
     <*> V.unsafeThaw (V.fromList lampEntities)
+    <*> V.unsafeThaw (V.fromList waterTiles)
     <*> mkProgram vertexShaderSrc fragmentShaderSrc
     <*> pure camera
     <*> pure proj
@@ -388,6 +394,8 @@ init w h = do
       , "res/skybox/front.jpg"
       , "res/skybox/back.jpg"
       ]
+    <*> Water.mkProgram
+    <*> Water.mkWater
     <*> pure (Linear.V3 0.5 0.5 0.5)
  where
   camera = Camera (Linear.V3 10 2 30) (Linear.V3 0 0 (-1)) (Linear.V3 0 1 0)
@@ -480,6 +488,12 @@ draw g = do
     (gameProj g)
   Terrain.draw (gameTerrain1 g) (gameTerrainProgram g)
   Terrain.draw (gameTerrain2 g) (gameTerrainProgram g)
+
+  Water.use $ gameWaterProgram g
+  Water.setUniforms (gameWaterProgram g) view (gameProj g)
+  forM_ [0..VM.length (gameWaterTiles g) - 1] $ \i -> do
+    tile <- VM.read (gameWaterTiles g) i
+    Water.drawTile (gameWater g) tile (gameWaterProgram g)
 
   glUseProgram $ pProgram $ gameProgram g
   programSetUniforms
