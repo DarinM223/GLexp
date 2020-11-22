@@ -36,6 +36,7 @@ library
                      , Engine.Terrain.Terrain
                      , Engine.Types
                      , Engine.Utils
+                     , Engine.Water.FrameBuffers
                      , Engine.Water.Water
   -- other-modules:
   -- other-extensions:

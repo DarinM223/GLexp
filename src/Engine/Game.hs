@@ -1,8 +1,13 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RecordWildCards #-}
-module Engine.Game where
+module Engine.Game
+  ( init
+  , update
+  , draw
+  ) where
 
+import Prelude hiding (init)
 import Control.Exception (bracket)
 import Control.Lens ((^.))
 import Control.Monad ((>=>), forM, forM_)
@@ -27,6 +32,7 @@ import qualified Data.Vector.Storable.Mutable as VM
 import qualified Engine.FixedArray as FixedArray
 import qualified Engine.Skybox as Skybox
 import qualified Engine.Terrain.Terrain as Terrain
+import qualified Engine.Water.FrameBuffers as FrameBuffers
 import qualified Engine.Water.Water as Water
 import qualified Graphics.UI.GLFW as GLFW
 import qualified Linear
@@ -131,20 +137,6 @@ fragmentShaderSrc = BS.pack
       color = mix(vec4(skyColor, 1.0), color, visibility);
     }
   |]
-
-vertices :: V.Vector GLfloat
-vertices = V.fromList
-  [ -1.0, 0.5, 0.0   , 0.0, 0.0
-  , -1.0, -0.5, 0.0  , 0.0, 1.0
-  , 1.0, -0.5, 0.0   , 1.0, 1.0
-  , 1.0, 0.5, 0.0    , 1.0, 0.0
-  ]
-
-indices :: V.Vector GLuint
-indices = V.fromList
-  [ 0, 1, 3 -- Top left triangle
-  , 3, 1, 2 -- Bottom right triangle
-  ]
 
 maxLights :: Int
 maxLights = 4
@@ -271,6 +263,7 @@ data Game = Game
   , gameSkybox         :: {-# UNPACK #-} !Skybox.Skybox
   , gameWaterProgram   :: {-# UNPACK #-} !Water.WaterProgram
   , gameWater          :: {-# UNPACK #-} !Water.Water
+  , gameWaterBuffers   :: {-# UNPACK #-} !FrameBuffers.FrameBuffers
   , gameSkyColor       :: {-# UNPACK #-} !(Linear.V3 GLfloat)
   }
 
@@ -396,6 +389,7 @@ init w h = do
       ]
     <*> Water.mkProgram
     <*> Water.mkWater
+    <*> FrameBuffers.init (fromIntegral w) (fromIntegral h)
     <*> pure (Linear.V3 0.5 0.5 0.5)
  where
   camera = Camera (Linear.V3 10 2 30) (Linear.V3 0 0 (-1)) (Linear.V3 0 1 0)
@@ -473,6 +467,20 @@ draw :: Game -> IO ()
 draw g = do
   let view = toViewMatrix $ gameCamera g
 
+  FrameBuffers.bindReflectionFrameBuffer $ gameWaterBuffers g
+  drawScene g view
+  FrameBuffers.unbindFrameBuffer $ gameWaterBuffers g
+
+  drawScene g view
+
+  Water.use $ gameWaterProgram g
+  Water.setUniforms (gameWaterProgram g) view (gameProj g)
+  forM_ [0..VM.length (gameWaterTiles g) - 1] $ \i -> do
+    tile <- VM.read (gameWaterTiles g) i
+    Water.drawTile (gameWater g) tile (gameWaterProgram g)
+
+drawScene :: Game -> Linear.M44 GLfloat -> IO ()
+drawScene g view = do
   case gameSkyColor g of
     Linear.V3 red green blue -> do
       glClearColor red green blue 1.0
@@ -488,12 +496,6 @@ draw g = do
     (gameProj g)
   Terrain.draw (gameTerrain1 g) (gameTerrainProgram g)
   Terrain.draw (gameTerrain2 g) (gameTerrainProgram g)
-
-  Water.use $ gameWaterProgram g
-  Water.setUniforms (gameWaterProgram g) view (gameProj g)
-  forM_ [0..VM.length (gameWaterTiles g) - 1] $ \i -> do
-    tile <- VM.read (gameWaterTiles g) i
-    Water.drawTile (gameWater g) tile (gameWaterProgram g)
 
   glUseProgram $ pProgram $ gameProgram g
   programSetUniforms
