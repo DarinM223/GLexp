@@ -9,7 +9,7 @@ module Engine.Game
 
 import Prelude hiding (init)
 import Control.Exception (bracket)
-import Control.Lens ((^.))
+import Control.Lens ((^.), (&), (%~))
 import Control.Monad ((>=>), forM, forM_)
 import Control.Monad.Primitive (PrimState)
 import Data.Bits ((.|.))
@@ -60,12 +60,14 @@ vertexShaderSrc = BS.pack
     uniform float useFakeLighting;
     uniform float numberOfRows;
     uniform vec2 offset;
+    uniform vec4 clipPlane;
 
     const float density = 0.007;
     const float gradient = 1.5;
 
     void main() {
       vec4 worldPosition = model * vec4(position, 1.0);
+      gl_ClipDistance[0] = dot(worldPosition, clipPlane);
       vec4 positionRelativeToCam = view * worldPosition;
       gl_Position = projection * positionRelativeToCam;
       v_texCoord = texCoord / numberOfRows + offset;
@@ -158,6 +160,7 @@ data TexProgram = TexProgram
   , pSkyColorLoc         :: {-# UNPACK #-} !GLint
   , pNumberOfRows        :: {-# UNPACK #-} !GLint
   , pOffset              :: {-# UNPACK #-} !GLint
+  , pClipPlane           :: {-# UNPACK #-} !GLint
   }
 
 mkProgram :: ByteString -> ByteString -> IO TexProgram
@@ -195,6 +198,8 @@ mkProgram vertexShaderSrc0 fragmentShaderSrc0 = do
     glGetUniformLocation pProgram name
   pOffset <- withCString "offset" $ \name ->
     glGetUniformLocation pProgram name
+  pClipPlane <- withCString "clipPlane" $ \name ->
+    glGetUniformLocation pProgram name
   return TexProgram{..}
  where
   loadVertexShader = loadShader GL_VERTEX_SHADER vertexShaderSrc0
@@ -219,8 +224,9 @@ programSetUniforms
   -> Linear.V3 GLfloat
   -> Linear.M44 GLfloat
   -> Linear.M44 GLfloat
+  -> Linear.V4 GLfloat
   -> IO ()
-programSetUniforms p lights skyColor view proj = do
+programSetUniforms p lights skyColor view proj clipPlane = do
   with view $ \matrixPtr ->
     glUniformMatrix4fv (pViewLoc p) 1 GL_TRUE (castPtr matrixPtr)
   with proj $ \matrixPtr ->
@@ -228,8 +234,10 @@ programSetUniforms p lights skyColor view proj = do
   forM_ lightsWithLocs $ \(l, posLoc, colLoc, attLoc) ->
     setLightUniforms l posLoc colLoc attLoc
   glUniform3f (pSkyColorLoc p) r g b
+  glUniform4f (pClipPlane p) px py pz pw
  where
   Linear.V3 r g b = skyColor
+  Linear.V4 px py pz pw = clipPlane
   padded = padLights lights (pLightPosLoc p) (pLightColorLoc p)
   lightsWithLocs =
     zip4 padded (pLightPosLoc p) (pLightColorLoc p) (pLightAttenuationLoc p)
@@ -392,7 +400,7 @@ init w h = do
     <*> FrameBuffers.init (fromIntegral w) (fromIntegral h)
     <*> pure (Linear.V3 0.5 0.5 0.5)
  where
-  camera = Camera (Linear.V3 10 2 30) (Linear.V3 0 0 (-1)) (Linear.V3 0 1 0)
+  camera = Camera (Linear.V3 10 2 30) (Linear.V3 0 0 (-1)) (Linear.V3 0 1 0) 0 0
   proj = perspectiveMat w h
   light1 =
     Light (Linear.V3 0 1000 (-7000)) (Linear.V3 0.4 0.4 0.4) (Linear.V3 1 0 0)
@@ -408,7 +416,12 @@ update keys mouseInfo dt g0 =
   foldlM update' g0' [0..VM.length (gameEntities g0') - 1] >>=
     (handleLeftClick mouseInfo >=> updateProjectiles)
  where
-  camera' = (gameCamera g0) { cameraFront = mouseFront mouseInfo }
+  (pitch, yaw) = mouseOldPitchYaw mouseInfo
+  camera' = (gameCamera g0)
+    { cameraFront = mouseFront mouseInfo
+    , cameraPitch = pitch
+    , cameraYaw   = yaw
+    }
   camera'' = updateCamera keys (30 * dt) camera'
 
   -- Clamps camera y value to the terrain height.
@@ -466,12 +479,24 @@ handleLeftClick info g = case mouseLeftCoords info of
 draw :: Game -> IO ()
 draw g = do
   let view = toViewMatrix $ gameCamera g
+  waterTile <- VM.read (gameWaterTiles g) 0
 
+  glEnable GL_CLIP_DISTANCE0
   FrameBuffers.bindReflectionFrameBuffer $ gameWaterBuffers g
-  drawScene g view
-  FrameBuffers.unbindFrameBuffer $ gameWaterBuffers g
+  let
+    distance = 2 * cameraPos (gameCamera g) ^. Linear._y - tileHeight waterTile
+    camera'  = (gameCamera g) { cameraPos = cameraPos (gameCamera g)
+                                          & Linear._y %~ (subtract distance)
+                              }
+    view' = toViewMatrix $ invertPitch camera'
+  drawScene g view' (Linear.V4 0 1 0 (-tileHeight waterTile))
 
-  drawScene g view
+  FrameBuffers.bindRefractionFrameBuffer $ gameWaterBuffers g
+  drawScene g view (Linear.V4 0 (-1) 0 (tileHeight waterTile))
+  glDisable GL_CLIP_DISTANCE0
+
+  FrameBuffers.unbindFrameBuffer $ gameWaterBuffers g
+  drawScene g view (Linear.V4 0 0 0 0)
 
   Water.use $ gameWaterProgram g
   Water.setUniforms (gameWaterProgram g) view (gameProj g)
@@ -479,8 +504,8 @@ draw g = do
     tile <- VM.read (gameWaterTiles g) i
     Water.drawTile (gameWater g) tile (gameWaterProgram g)
 
-drawScene :: Game -> Linear.M44 GLfloat -> IO ()
-drawScene g view = do
+drawScene :: Game -> Linear.M44 GLfloat -> Linear.V4 GLfloat -> IO ()
+drawScene g view clipPlane = do
   case gameSkyColor g of
     Linear.V3 red green blue -> do
       glClearColor red green blue 1.0
@@ -494,12 +519,13 @@ drawScene g view = do
     (gameSkyColor g)
     view
     (gameProj g)
+    clipPlane
   Terrain.draw (gameTerrain1 g) (gameTerrainProgram g)
   Terrain.draw (gameTerrain2 g) (gameTerrainProgram g)
 
   glUseProgram $ pProgram $ gameProgram g
   programSetUniforms
-    (gameProgram g) (gameLights g) (gameSkyColor g) view (gameProj g)
+    (gameProgram g) (gameLights g) (gameSkyColor g) view (gameProj g) clipPlane
   programSetTexture (gameProgram g) (gameTexture g)
 
   glBindVertexArray $ modelVao $ gameRawModel g
