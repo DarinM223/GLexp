@@ -46,12 +46,12 @@ data FrameBuffers = FrameBuffers
 init :: GLsizei -> GLsizei -> IO FrameBuffers
 init w h = FrameBuffers w h
   <$> mkFrameBuffer
-  <*> mkTextureAttachment reflectionWidth reflectionHeight GL_COLOR_ATTACHMENT0
+  <*> mkTextureAttachment reflectionWidth reflectionHeight
   <*> mkDepthBufferAttachment reflectionWidth reflectionHeight
   <*  unbindFrameBuffer' w h
   <*> mkFrameBuffer
-  <*> mkTextureAttachment refractionWidth refractionHeight GL_COLOR_ATTACHMENT0
-  <*> mkTextureAttachment refractionWidth refractionHeight GL_DEPTH_ATTACHMENT
+  <*> mkTextureAttachment refractionWidth refractionHeight
+  <*> mkDepthTextureAttachment refractionWidth refractionHeight
   <*  unbindFrameBuffer' w h
 
 delete :: FrameBuffers -> IO ()
@@ -93,15 +93,27 @@ mkFrameBuffer = do
   glDrawBuffer GL_COLOR_ATTACHMENT0
   return frameBuffer
 
-mkTextureAttachment :: GLsizei -> GLsizei -> GLenum -> IO GLuint
-mkTextureAttachment w h attachType = do
+mkTextureAttachment :: GLsizei -> GLsizei -> IO GLuint
+mkTextureAttachment w h = do
   texture <- alloca $ \texturePtr ->
     glGenTextures 1 texturePtr >> peek texturePtr
   glBindTexture GL_TEXTURE_2D texture
   glTexImage2D GL_TEXTURE_2D 0 GL_RGB w h 0 GL_RGB GL_UNSIGNED_BYTE nullPtr
   glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_LINEAR
   glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER GL_LINEAR
-  glFramebufferTexture GL_FRAMEBUFFER attachType texture 0
+  glFramebufferTexture GL_FRAMEBUFFER GL_COLOR_ATTACHMENT0 texture 0
+  return texture
+
+mkDepthTextureAttachment :: GLsizei -> GLsizei -> IO GLuint
+mkDepthTextureAttachment w h = do
+  texture <- alloca $ \texturePtr ->
+    glGenTextures 1 texturePtr >> peek texturePtr
+  glBindTexture GL_TEXTURE_2D texture
+  glTexImage2D GL_TEXTURE_2D
+    0 GL_DEPTH_COMPONENT32 w h 0 GL_DEPTH_COMPONENT GL_FLOAT nullPtr
+  glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_LINEAR
+  glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER GL_LINEAR
+  glFramebufferTexture GL_FRAMEBUFFER GL_DEPTH_ATTACHMENT texture 0
   return texture
 
 mkDepthBufferAttachment :: GLsizei -> GLsizei -> IO GLuint

@@ -500,6 +500,10 @@ draw g = do
 
   Water.use $ gameWaterProgram g
   Water.setUniforms (gameWaterProgram g) view (gameProj g)
+  Water.setTextures
+    (gameWaterProgram g)
+    (FrameBuffers.reflectionTexture (gameWaterBuffers g))
+    (FrameBuffers.refractionTexture (gameWaterBuffers g))
   forM_ [0..VM.length (gameWaterTiles g) - 1] $ \i -> do
     tile <- VM.read (gameWaterTiles g) i
     Water.drawTile (gameWater g) tile (gameWaterProgram g)
