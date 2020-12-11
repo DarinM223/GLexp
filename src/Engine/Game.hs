@@ -27,6 +27,7 @@ import Graphics.GL.Types
 import Linear ((!!*))
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Set as S
+import qualified Data.Time.Clock as Clock
 import qualified Data.Vector.Storable as V
 import qualified Data.Vector.Storable.Mutable as VM
 import qualified Engine.FixedArray as FixedArray
@@ -272,6 +273,8 @@ data Game = Game
   , gameWaterProgram   :: {-# UNPACK #-} !Water.WaterProgram
   , gameWater          :: {-# UNPACK #-} !Water.Water
   , gameWaterBuffers   :: {-# UNPACK #-} !FrameBuffers.FrameBuffers
+  , gameLastTime       :: {-# UNPACK #-} !Clock.UTCTime
+  , gameElapsedTime    :: {-# UNPACK #-} !GLfloat
   , gameSkyColor       :: {-# UNPACK #-} !(Linear.V3 GLfloat)
   }
 
@@ -398,6 +401,8 @@ init w h = do
     <*> Water.mkProgram
     <*> Water.mkWater
     <*> FrameBuffers.init (fromIntegral w) (fromIntegral h)
+    <*> Clock.getCurrentTime
+    <*> pure 0
     <*> pure (Linear.V3 0.5 0.5 0.5)
  where
   camera = Camera (Linear.V3 10 2 30) (Linear.V3 0 0 (-1)) (Linear.V3 0 1 0) 0 0
@@ -414,7 +419,7 @@ init w h = do
 update :: S.Set GLFW.Key -> MouseInfo -> GLfloat -> Game -> IO Game
 update keys mouseInfo dt g0 =
   foldlM update' g0' [0..VM.length (gameEntities g0') - 1] >>=
-    (handleLeftClick mouseInfo >=> updateProjectiles)
+    (handleLeftClick mouseInfo >=> updateProjectiles >=> updateTime)
  where
   (pitch, yaw) = mouseOldPitchYaw mouseInfo
   camera' = (gameCamera g0)
@@ -454,6 +459,13 @@ updateProjectiles g
     if projectileLife p - 1 < 0
       then FixedArray.delete ps' i
       else pure ps'
+
+updateTime :: Game -> IO Game
+updateTime g = do
+  currentTime <- Clock.getCurrentTime
+  let diffTime = realToFrac . Clock.nominalDiffTimeToSeconds
+               $ Clock.diffUTCTime currentTime (gameLastTime g)
+  return g { gameElapsedTime = diffTime, gameLastTime = currentTime }
 
 handleLeftClick :: MouseInfo -> Game -> IO Game
 handleLeftClick info g = case mouseLeftCoords info of
@@ -499,11 +511,13 @@ draw g = do
   drawScene g view (Linear.V4 0 0 0 0)
 
   Water.use $ gameWaterProgram g
-  Water.setUniforms (gameWaterProgram g) view (gameProj g)
+  Water.update (gameWater g) (gameElapsedTime g) >>=
+    Water.setUniforms (gameWaterProgram g) view (gameProj g)
   Water.setTextures
     (gameWaterProgram g)
     (FrameBuffers.reflectionTexture (gameWaterBuffers g))
     (FrameBuffers.refractionTexture (gameWaterBuffers g))
+    (Water.dudvMap (gameWater g))
   forM_ [0..VM.length (gameWaterTiles g) - 1] $ \i -> do
     tile <- VM.read (gameWaterTiles g) i
     Water.drawTile (gameWater g) tile (gameWaterProgram g)
