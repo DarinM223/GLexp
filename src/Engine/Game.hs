@@ -511,8 +511,8 @@ draw g = do
   drawScene g view (Linear.V4 0 0 0 0)
 
   Water.use $ gameWaterProgram g
-  Water.update (gameWater g) (gameElapsedTime g) >>=
-    Water.setUniforms (gameWaterProgram g) view (gameProj g)
+  Water.update (gameWater g) (gameElapsedTime g) >>= Water.setUniforms
+    (gameWaterProgram g) view (gameProj g) (cameraPos (gameCamera g))
   Water.setTextures
     (gameWaterProgram g)
     (FrameBuffers.reflectionTexture (gameWaterBuffers g))

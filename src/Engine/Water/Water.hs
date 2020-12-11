@@ -42,17 +42,21 @@ vertexShaderSrc = BS.pack
     in vec2 position;
     out vec4 clipSpace;
     out vec2 texCoord;
+    out vec3 toCameraVector;
 
     uniform mat4 model;
     uniform mat4 view;
     uniform mat4 projection;
+    uniform vec3 cameraPosition;
 
     const float tiling = 6.0;
 
     void main() {
-      clipSpace = projection * view * model * vec4(position.x, 0.0, position.y, 1.0);
+      vec4 worldPosition = model * vec4(position.x, 0.0, position.y, 1.0);
+      clipSpace = projection * view * worldPosition;
       gl_Position = clipSpace;
       texCoord = vec2(position.x / 2.0 + 0.5, position.y / 2.0 + 0.5) * tiling;
+      toCameraVector = cameraPosition - worldPosition.xyz;
     }
   |]
 
@@ -62,6 +66,7 @@ fragmentShaderSrc = BS.pack
     #version 330 core
     in vec4 clipSpace;
     in vec2 texCoord;
+    in vec3 toCameraVector;
     out vec4 color;
 
     uniform sampler2D reflectionTexture;
@@ -91,7 +96,10 @@ fragmentShaderSrc = BS.pack
       vec4 reflectColor = texture(reflectionTexture, reflectTexCoords);
       vec4 refractColor = texture(refractionTexture, refractTexCoords);
 
-      color = mix(reflectColor, refractColor, 0.5);
+      float refractiveFactor = dot(normalize(toCameraVector), vec3(0.0, 1.0, 0.0));
+
+      color = mix(reflectColor, refractColor, refractiveFactor);
+      color = mix(color, vec4(0.0, 0.3, 0.5, 1.0), 0.2);
     }
   |]
 
@@ -100,6 +108,7 @@ data WaterProgram = WaterProgram
   , wModelLoc             :: {-# UNPACK #-} !GLint
   , wViewLoc              :: {-# UNPACK #-} !GLint
   , wProjLoc              :: {-# UNPACK #-} !GLint
+  , wCameraPositionLoc    :: {-# UNPACK #-} !GLint
   , wReflectionTextureLoc :: {-# UNPACK #-} !GLint
   , wRefractionTextureLoc :: {-# UNPACK #-} !GLint
   , wDudvMapLoc           :: {-# UNPACK #-} !GLint
@@ -117,6 +126,8 @@ mkProgram = do
   wViewLoc <- withCString "view" $ \name ->
     glGetUniformLocation wProgram name
   wProjLoc <- withCString "projection" $ \name ->
+    glGetUniformLocation wProgram name
+  wCameraPositionLoc <- withCString "cameraPosition" $ \name ->
     glGetUniformLocation wProgram name
   wReflectionTextureLoc <- withCString "reflectionTexture" $ \name ->
     glGetUniformLocation wProgram name
@@ -137,14 +148,17 @@ use = glUseProgram . wProgram
 setUniforms :: WaterProgram
             -> Linear.M44 GLfloat
             -> Linear.M44 GLfloat
+            -> Linear.V3 GLfloat
             -> GLfloat
             -> IO ()
-setUniforms p view proj moveFactor = do
+setUniforms p view proj cameraPosition moveFactor = do
+  glUniform3f (wCameraPositionLoc p) posx posy posz
   with view $ \matrixPtr ->
     glUniformMatrix4fv (wViewLoc p) 1 GL_TRUE (castPtr matrixPtr)
   with proj $ \matrixPtr ->
     glUniformMatrix4fv (wProjLoc p) 1 GL_TRUE (castPtr matrixPtr)
   glUniform1f (wMoveFactorLoc p) moveFactor
+ where Linear.V3 posx posy posz = cameraPosition
 
 setTextures :: WaterProgram -> GLuint -> GLuint -> Texture -> IO ()
 setTextures p reflectTex refractTex dudvTex = do
