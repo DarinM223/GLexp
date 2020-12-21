@@ -10,6 +10,7 @@ module Engine.Utils
   , loadVAO
   , loadVAOWithIndices
   , loadObj
+  , shaderHeader
   ) where
 
 import Codec.Picture
@@ -265,6 +266,10 @@ linkShaders shaders = do
       logBytes <- peekArray (fromIntegral logLength) infoLog
       throwIO $ LinkException $ fmap (toEnum . fromEnum) logBytes
   return program
+
+shaderHeader :: Int -> String
+shaderHeader maxLights =
+  "#version 330 core\n" ++ "#define NUM_LIGHTS " ++ show maxLights ++ "\n"
 
 errorString :: GLenum -> String
 errorString GL_NO_ERROR                      = "No error"

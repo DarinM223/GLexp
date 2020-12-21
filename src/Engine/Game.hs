@@ -398,7 +398,7 @@ init w h = do
       , "res/skybox/front.jpg"
       , "res/skybox/back.jpg"
       ]
-    <*> Water.mkProgram
+    <*> Water.mkProgram maxLights
     <*> Water.mkWater
     <*> FrameBuffers.init (fromIntegral w) (fromIntegral h)
     <*> Clock.getCurrentTime
@@ -513,11 +513,13 @@ draw g = do
   Water.use $ gameWaterProgram g
   Water.update (gameWater g) (gameElapsedTime g) >>= Water.setUniforms
     (gameWaterProgram g) view (gameProj g) (cameraPos (gameCamera g))
+  Water.setLights (gameWaterProgram g) (gameLights g)
   Water.setTextures
     (gameWaterProgram g)
     (FrameBuffers.reflectionTexture (gameWaterBuffers g))
     (FrameBuffers.refractionTexture (gameWaterBuffers g))
     (Water.dudvMap (gameWater g))
+    (Water.normalMap (gameWater g))
   forM_ [0..VM.length (gameWaterTiles g) - 1] $ \i -> do
     tile <- VM.read (gameWaterTiles g) i
     Water.drawTile (gameWater g) tile (gameWaterProgram g)

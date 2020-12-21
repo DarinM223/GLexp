@@ -2,22 +2,25 @@
 {-# LANGUAGE RecordWildCards #-}
 module Engine.Water.Water
   ( WaterProgram
-  , Water (dudvMap)
+  , Water (dudvMap, normalMap)
   , mkProgram
   , mkWater
   , use
   , setUniforms
+  , setLights
   , setTextures
   , update
   , drawTile
   ) where
 
 import Control.Exception (bracket)
+import Control.Monad (forM, forM_)
 import Data.ByteString (ByteString)
 import Data.Fixed (mod')
 import Data.IORef
 import Engine.Types
-import Engine.Utils (linkShaders, loadShader, loadTexture, loadVAO)
+import Engine.Utils
+  (linkShaders, loadShader, loadTexture, loadVAO, shaderHeader)
 import Foreign.C.String (withCString)
 import Foreign.Marshal.Utils (with)
 import Foreign.Ptr (castPtr)
@@ -35,18 +38,19 @@ waterTileSize = 20
 waveSpeed :: GLfloat
 waveSpeed = 0.03
 
-vertexShaderSrc :: ByteString
-vertexShaderSrc = BS.pack
+vertexShaderSrc :: Int -> ByteString
+vertexShaderSrc maxLights = BS.pack (shaderHeader maxLights) <> BS.pack
   [QQ.r|
-    #version 330 core
     in vec2 position;
     out vec4 clipSpace;
     out vec2 texCoord;
-    out vec3 toCameraVector;
+    out vec3 lightVec[NUM_LIGHTS];
+    out vec3 cameraVec;
 
     uniform mat4 model;
     uniform mat4 view;
     uniform mat4 projection;
+    uniform vec3 lightPosition[NUM_LIGHTS];
     uniform vec3 cameraPosition;
 
     const float tiling = 6.0;
@@ -56,35 +60,42 @@ vertexShaderSrc = BS.pack
       clipSpace = projection * view * worldPosition;
       gl_Position = clipSpace;
       texCoord = vec2(position.x / 2.0 + 0.5, position.y / 2.0 + 0.5) * tiling;
-      toCameraVector = cameraPosition - worldPosition.xyz;
+      for (int i = 0; i < NUM_LIGHTS; i++) {
+        lightVec[i] = worldPosition.xyz - lightPosition[i];
+      }
+      cameraVec = cameraPosition - worldPosition.xyz;
     }
   |]
 
-fragmentShaderSrc :: ByteString
-fragmentShaderSrc = BS.pack
+fragmentShaderSrc :: Int -> ByteString
+fragmentShaderSrc maxLights = BS.pack (shaderHeader maxLights) <> BS.pack
   [QQ.r|
-    #version 330 core
     in vec4 clipSpace;
     in vec2 texCoord;
-    in vec3 toCameraVector;
+    in vec3 lightVec[NUM_LIGHTS];
+    in vec3 cameraVec;
     out vec4 color;
 
     uniform sampler2D reflectionTexture;
     uniform sampler2D refractionTexture;
     uniform sampler2D dudvMap;
+    uniform sampler2D normalMap;
+    uniform vec3 lightColor[NUM_LIGHTS];
 
     uniform float moveFactor;
 
     const float waveStrength = 0.02;
+    const float shineDamper = 20.0;
+    const float reflectivity = 0.6;
 
     void main() {
       vec2 ndc = (clipSpace.xy / clipSpace.w) / 2.0 + 0.5;
       vec2 refractTexCoords = vec2(ndc.x, ndc.y);
       vec2 reflectTexCoords = vec2(ndc.x, -ndc.y);
 
-      vec2 distortion1 = (texture(dudvMap, vec2(texCoord.x + moveFactor, texCoord.y)).rg * 2.0 - 1.0) * waveStrength;
-      vec2 distortion2 = (texture(dudvMap, vec2(-texCoord.x + moveFactor, texCoord.y + moveFactor)).rg * 2.0 - 1.0) * waveStrength;
-      vec2 totalDistortion = distortion1 + distortion2;
+      vec2 distortedCoords = texture(dudvMap, vec2(texCoord.x + moveFactor, texCoord.y)).rg * 0.1;
+      distortedCoords = texCoord + vec2(distortedCoords.x, distortedCoords.y + moveFactor);
+      vec2 totalDistortion = (texture(dudvMap, distortedCoords).rg * 2.0 - 1.0) * waveStrength;
 
       refractTexCoords += totalDistortion;
       refractTexCoords = clamp(refractTexCoords, 0.001, 0.999);
@@ -96,10 +107,23 @@ fragmentShaderSrc = BS.pack
       vec4 reflectColor = texture(reflectionTexture, reflectTexCoords);
       vec4 refractColor = texture(refractionTexture, refractTexCoords);
 
-      float refractiveFactor = dot(normalize(toCameraVector), vec3(0.0, 1.0, 0.0));
+      vec3 unitCameraVec = normalize(cameraVec);
+      float refractiveFactor = dot(unitCameraVec, vec3(0.0, 1.0, 0.0));
+
+      vec4 normalMapColor = texture(normalMap, distortedCoords);
+      vec3 normal = vec3(normalMapColor.r * 2.0 - 1.0, normalMapColor.b, normalMapColor.g * 2.0 - 1.0);
+      vec3 unitNormal = normalize(normal);
+
+      vec3 totalSpecular = vec3(0.0);
+      for (int i = 0; i < NUM_LIGHTS; i++) {
+        vec3 reflectedLightVec = reflect(normalize(lightVec[i]), unitNormal);
+        float specularFactor = max(dot(reflectedLightVec, unitCameraVec), 0.0);
+        float dampedFactor = pow(specularFactor, shineDamper);
+        totalSpecular += dampedFactor * reflectivity * lightColor[i];
+      }
 
       color = mix(reflectColor, refractColor, refractiveFactor);
-      color = mix(color, vec4(0.0, 0.3, 0.5, 1.0), 0.2);
+      color = mix(color, vec4(0.0, 0.3, 0.5, 1.0), 0.2) + vec4(totalSpecular, 0.0);
     }
   |]
 
@@ -108,39 +132,45 @@ data WaterProgram = WaterProgram
   , wModelLoc             :: {-# UNPACK #-} !GLint
   , wViewLoc              :: {-# UNPACK #-} !GLint
   , wProjLoc              :: {-# UNPACK #-} !GLint
+  , wLightPositionLoc     :: ![GLint]
   , wCameraPositionLoc    :: {-# UNPACK #-} !GLint
   , wReflectionTextureLoc :: {-# UNPACK #-} !GLint
   , wRefractionTextureLoc :: {-# UNPACK #-} !GLint
   , wDudvMapLoc           :: {-# UNPACK #-} !GLint
+  , wNormalMapLoc         :: {-# UNPACK #-} !GLint
+  , wLightColorLoc        :: ![GLint]
   , wMoveFactorLoc        :: {-# UNPACK #-} !GLint
   }
 
-mkProgram :: IO WaterProgram
-mkProgram = do
+mkProgram :: Int -> IO WaterProgram
+mkProgram maxLights = do
   wProgram <-
     bracket loadVertexShader glDeleteShader $ \vertexShader ->
     bracket loadFragmentShader glDeleteShader $ \fragmentShader ->
       linkShaders [vertexShader, fragmentShader]
-  wModelLoc <- withCString "model" $ \name ->
-    glGetUniformLocation wProgram name
-  wViewLoc <- withCString "view" $ \name ->
-    glGetUniformLocation wProgram name
-  wProjLoc <- withCString "projection" $ \name ->
-    glGetUniformLocation wProgram name
-  wCameraPositionLoc <- withCString "cameraPosition" $ \name ->
-    glGetUniformLocation wProgram name
-  wReflectionTextureLoc <- withCString "reflectionTexture" $ \name ->
-    glGetUniformLocation wProgram name
-  wRefractionTextureLoc <- withCString "refractionTexture" $ \name ->
-    glGetUniformLocation wProgram name
-  wDudvMapLoc <- withCString "dudvMap" $ \name ->
-    glGetUniformLocation wProgram name
-  wMoveFactorLoc <- withCString "moveFactor" $ \name ->
-    glGetUniformLocation wProgram name
+  wModelLoc <- withCString "model" $ glGetUniformLocation wProgram
+  wViewLoc <- withCString "view" $ glGetUniformLocation wProgram
+  wProjLoc <- withCString "projection" $ glGetUniformLocation wProgram
+  wLightPositionLoc <- forM [0..maxLights - 1] $ \i ->
+    withCString ("lightPosition[" ++ show i ++ "]") $
+      glGetUniformLocation wProgram
+  wCameraPositionLoc <- withCString "cameraPosition" $
+    glGetUniformLocation wProgram
+  wReflectionTextureLoc <- withCString "reflectionTexture" $
+    glGetUniformLocation wProgram
+  wRefractionTextureLoc <- withCString "refractionTexture" $
+    glGetUniformLocation wProgram
+  wDudvMapLoc <- withCString "dudvMap" $ glGetUniformLocation wProgram
+  wNormalMapLoc <- withCString "normalMap" $ glGetUniformLocation wProgram
+  wLightColorLoc <- forM [0..maxLights - 1] $ \i ->
+    withCString ("lightColor[" ++ show i ++ "]") $
+      glGetUniformLocation wProgram
+  wMoveFactorLoc <- withCString "moveFactor" $ glGetUniformLocation wProgram
   return WaterProgram{..}
  where
-  loadVertexShader = loadShader GL_VERTEX_SHADER vertexShaderSrc
-  loadFragmentShader = loadShader GL_FRAGMENT_SHADER fragmentShaderSrc
+  loadVertexShader = loadShader GL_VERTEX_SHADER (vertexShaderSrc maxLights)
+  loadFragmentShader =
+    loadShader GL_FRAGMENT_SHADER (fragmentShaderSrc maxLights)
 
 use :: WaterProgram -> IO ()
 use = glUseProgram . wProgram
@@ -160,8 +190,18 @@ setUniforms p view proj cameraPosition moveFactor = do
   glUniform1f (wMoveFactorLoc p) moveFactor
  where Linear.V3 posx posy posz = cameraPosition
 
-setTextures :: WaterProgram -> GLuint -> GLuint -> Texture -> IO ()
-setTextures p reflectTex refractTex dudvTex = do
+setLights :: WaterProgram -> [Light] -> IO ()
+setLights p lights = forM_ lightsWithLocs $ \(l, posLoc, colLoc) -> do
+  let Linear.V3 px py pz = lightPos l
+      Linear.V3 cx cy cz = lightColor l
+  glUniform3f posLoc px py pz
+  glUniform3f colLoc cx cy cz
+ where
+  padded = padLights lights (wLightPositionLoc p) (wLightColorLoc p)
+  lightsWithLocs = zip3 padded (wLightPositionLoc p) (wLightColorLoc p)
+
+setTextures :: WaterProgram -> GLuint -> GLuint -> Texture -> Texture -> IO ()
+setTextures p reflectTex refractTex dudvTex normalTex = do
   glActiveTexture GL_TEXTURE0
   glBindTexture GL_TEXTURE_2D reflectTex
   glUniform1i (wReflectionTextureLoc p) 0
@@ -174,6 +214,10 @@ setTextures p reflectTex refractTex dudvTex = do
   glBindTexture GL_TEXTURE_2D $ textureID dudvTex
   glUniform1i (wDudvMapLoc p) 2
 
+  glActiveTexture GL_TEXTURE3
+  glBindTexture GL_TEXTURE_2D $ textureID normalTex
+  glUniform1i (wNormalMapLoc p) 3
+
 -- | Only the x and z coordinates because y is fixed to 0 in the shader.
 waterVertices :: V.Vector GLfloat
 waterVertices = V.fromList [-1, -1, -1, 1, 1, -1, 1, -1, -1, 1, 1, 1]
@@ -181,6 +225,7 @@ waterVertices = V.fromList [-1, -1, -1, 1, 1, -1, 1, -1, -1, 1, 1, 1]
 data Water = Water
   { waterRawModel   :: {-# UNPACK #-} !RawModel
   , dudvMap         :: {-# UNPACK #-} !Texture
+  , normalMap       :: {-# UNPACK #-} !Texture
   , waterMoveFactor :: {-# UNPACK #-} !(IORef GLfloat)
   }
 
@@ -188,6 +233,7 @@ mkWater :: IO Water
 mkWater = Water
   <$> loadVAO waterVertices 2
   <*> loadTexture "res/waterDUDV.png"
+  <*> loadTexture "res/normalMap.png"
   <*> newIORef 0
 
 update :: Water -> GLfloat -> IO GLfloat
