@@ -19,7 +19,7 @@ import Data.ByteString (ByteString)
 import Data.Fixed (mod')
 import Data.List (zip4)
 import Engine.Types
-import Engine.Utils (linkShaders, loadShader)
+import Engine.Utils (linkShaders, loadShader, shaderHeader)
 import Foreign.C.String (withCString)
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Utils (with)
@@ -32,11 +32,9 @@ import qualified Data.Vector.Storable as V
 import qualified Linear
 import qualified Text.RawString.QQ as QQ
 
-vertexShaderSrc :: ByteString
-vertexShaderSrc = BS.pack
+vertexShaderSrc :: Int -> ByteString
+vertexShaderSrc maxLights = BS.pack (shaderHeader maxLights) <> BS.pack
   [QQ.r|
-    #version 330 core
-    #define NUM_LIGHTS 4
     in vec3 position;
     in vec2 texCoord;
     in vec3 normal;
@@ -74,11 +72,9 @@ vertexShaderSrc = BS.pack
     }
   |]
 
-fragmentShaderSrc :: ByteString
-fragmentShaderSrc = BS.pack
+fragmentShaderSrc :: Int -> ByteString
+fragmentShaderSrc maxLights = BS.pack (shaderHeader maxLights) <> BS.pack
   [QQ.r|
-    #version 330 core
-    #define NUM_LIGHTS 4
     in vec2 v_texCoord;
     in vec3 surfaceNormal;
     in vec3 lightVec[NUM_LIGHTS];
@@ -368,8 +364,9 @@ mkProgram maxLights = do
     glGetUniformLocation tProgram name
   return TerrainProgram{..}
  where
-  loadVertexShader = loadShader GL_VERTEX_SHADER vertexShaderSrc
-  loadFragmentShader = loadShader GL_FRAGMENT_SHADER fragmentShaderSrc
+  loadVertexShader = loadShader GL_VERTEX_SHADER $ vertexShaderSrc maxLights
+  loadFragmentShader =
+    loadShader GL_FRAGMENT_SHADER $ fragmentShaderSrc maxLights
 
 setUniforms
   :: Terrain

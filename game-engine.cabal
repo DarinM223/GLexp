@@ -34,6 +34,7 @@ library
                      , Engine.MousePicker
                      , Engine.Skybox
                      , Engine.Terrain.Terrain
+                     , Engine.TexturedModel
                      , Engine.Types
                      , Engine.Utils
                      , Engine.Water.FrameBuffers
