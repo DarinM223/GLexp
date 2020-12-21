@@ -51,12 +51,14 @@ vertexShaderSrc = BS.pack
     uniform mat4 view;       // Transformation of the camera
     uniform mat4 projection; // Clipping coordinates outside FOV
     uniform vec3 lightPosition[NUM_LIGHTS];
+    uniform vec4 clipPlane;
 
     const float density = 0.007;
     const float gradient = 1.5;
 
     void main() {
       vec4 worldPosition = model * vec4(position, 1.0);
+      gl_ClipDistance[0] = dot(worldPosition, clipPlane);
       vec4 positionRelativeToCam = view * worldPosition;
       gl_Position = projection * positionRelativeToCam;
       v_texCoord = texCoord;
@@ -320,6 +322,7 @@ data TerrainProgram = TerrainProgram
   , tShineDamperLoc      :: {-# UNPACK #-} !GLint
   , tReflectivityLoc     :: {-# UNPACK #-} !GLint
   , tSkyColorLoc         :: {-# UNPACK #-} !GLint
+  , tClipPlaneLoc        :: {-# UNPACK #-} !GLint
   }
 
 mkProgram :: Int -> IO TerrainProgram
@@ -361,6 +364,8 @@ mkProgram maxLights = do
     glGetUniformLocation tProgram name
   tSkyColorLoc <- withCString "skyColor" $ \name ->
     glGetUniformLocation tProgram name
+  tClipPlaneLoc <- withCString "clipPlane" $ \name ->
+    glGetUniformLocation tProgram name
   return TerrainProgram{..}
  where
   loadVertexShader = loadShader GL_VERTEX_SHADER vertexShaderSrc
@@ -373,8 +378,9 @@ setUniforms
   -> Linear.V3 GLfloat
   -> Linear.M44 GLfloat
   -> Linear.M44 GLfloat
+  -> Linear.V4 GLfloat
   -> IO ()
-setUniforms t p lights skyColor view proj = do
+setUniforms t p lights skyColor view proj clipPlane = do
   glActiveTexture GL_TEXTURE0
   glBindTexture GL_TEXTURE_2D $ textureID packBackground
   glUniform1i (tBackTextureLoc p) 0
@@ -405,9 +411,11 @@ setUniforms t p lights skyColor view proj = do
   forM_ lightsWithLocs $ \(l, posLoc, colLoc, attLoc) ->
     setLightUniforms l posLoc colLoc attLoc
   glUniform3f (tSkyColorLoc p) r g b
+  glUniform4f (tClipPlaneLoc p) px py pz pw
  where
   TexturePack{..} = terrainPack t
   Linear.V3 r g b = skyColor
+  Linear.V4 px py pz pw = clipPlane
   padded = padLights lights (tLightPosLoc p) (tLightColorLoc p)
   lightsWithLocs =
     zip4 padded (tLightPosLoc p) (tLightColorLoc p) (tLightAttenuationLoc p)

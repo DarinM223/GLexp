@@ -19,15 +19,20 @@ data MouseInfo = MouseInfo
   , mouseLeftCoords   :: !(Maybe (Double, Double))
   }
 
+calcFront :: Double -> Double -> Linear.V3 GLfloat
+calcFront pitch yaw = Linear.normalize $ Linear.V3
+  (cos yawR * cos pitchR) (sin pitchR) (sin yawR * cos pitchR)
+ where
+  toRadians = realToFrac . (* (pi / 180))
+  (yawR, pitchR) = (toRadians yaw, toRadians pitch)
+
 updateMouseInfo :: Double -> Double -> MouseInfo -> MouseInfo
 updateMouseInfo x y info = info
   { mouseLastPos     = Just (x, y)
   , mouseOldPitchYaw = (pitch, yaw)
-  , mouseFront       = front
+  , mouseFront       = calcFront pitch yaw
   }
  where
-  toRadians = realToFrac . (* (pi / 180))
-
   (lastX, lastY) = case mouseLastPos info of
     Just (x', y') -> (x', y')
     Nothing       -> (x, y)
@@ -37,18 +42,24 @@ updateMouseInfo x y info = info
   (oldPitch, oldYaw) = mouseOldPitchYaw info
   yaw = (oldYaw + dx) `mod'` 360
   pitch = oldPitch + dy
-  (yawR, pitchR) = (toRadians yaw, toRadians pitch)
-  front = Linear.normalize $ Linear.V3
-    (cos yawR * cos pitchR) (sin pitchR) (sin yawR * cos pitchR)
 
 data Camera = Camera
   { cameraPos   :: {-# UNPACK #-} !(Linear.V3 GLfloat)
   , cameraFront :: {-# UNPACK #-} !(Linear.V3 GLfloat)
   , cameraUp    :: {-# UNPACK #-} !(Linear.V3 GLfloat)
+  , cameraPitch :: {-# UNPACK #-} !Double
+  , cameraYaw   :: {-# UNPACK #-} !Double
   }
 
+invertPitch :: Camera -> Camera
+invertPitch c = c
+  { cameraPitch = pitch'
+  , cameraFront = calcFront pitch' (cameraYaw c)
+  }
+ where pitch' = -cameraPitch c
+
 updateCamera :: S.Set GLFW.Key -> GLfloat -> Camera -> Camera
-updateCamera keys speed cam@(Camera pos front up) =
+updateCamera keys speed cam@(Camera pos front up _ _) =
   cam { cameraPos = pos ^+^ (speed *^ Linear.normalize vec) }
  where
   vec = S.foldl' buildVec (Linear.V3 0 0 0) keys
@@ -59,7 +70,7 @@ updateCamera keys speed cam@(Camera pos front up) =
   buildVec v _          = v
 
 toViewMatrix :: Camera -> Linear.M44 GLfloat
-toViewMatrix (Camera pos front up) = Linear.lookAt pos (pos ^+^ front) up
+toViewMatrix (Camera pos front up _ _) = Linear.lookAt pos (pos ^+^ front) up
 
 data Light = Light
   { lightPos         :: {-# UNPACK #-} !(Linear.V3 GLfloat)
@@ -124,6 +135,13 @@ data Projectile = Projectile
   , projectileEntity   :: {-# UNPACK #-} !Entity
   }
 $(deriveStorable ''Projectile)
+
+data WaterTile = WaterTile
+  { tileX      :: {-# UNPACK #-} !GLfloat
+  , tileZ      :: {-# UNPACK #-} !GLfloat
+  , tileHeight :: {-# UNPACK #-} !GLfloat
+  }
+$(deriveStorable ''WaterTile)
 
 data TexturePack = TexturePack
   { packBackground :: {-# UNPACK #-} !Texture

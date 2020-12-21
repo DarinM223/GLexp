@@ -1,10 +1,15 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RecordWildCards #-}
-module Engine.Game where
+module Engine.Game
+  ( init
+  , update
+  , draw
+  ) where
 
+import Prelude hiding (init)
 import Control.Exception (bracket)
-import Control.Lens ((^.))
+import Control.Lens ((^.), (&), (%~))
 import Control.Monad ((>=>), forM, forM_)
 import Control.Monad.Primitive (PrimState)
 import Data.Bits ((.|.))
@@ -22,11 +27,14 @@ import Graphics.GL.Types
 import Linear ((!!*))
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Set as S
+import qualified Data.Time.Clock as Clock
 import qualified Data.Vector.Storable as V
 import qualified Data.Vector.Storable.Mutable as VM
 import qualified Engine.FixedArray as FixedArray
 import qualified Engine.Skybox as Skybox
 import qualified Engine.Terrain.Terrain as Terrain
+import qualified Engine.Water.FrameBuffers as FrameBuffers
+import qualified Engine.Water.Water as Water
 import qualified Graphics.UI.GLFW as GLFW
 import qualified Linear
 import qualified Text.RawString.QQ as QQ
@@ -53,12 +61,14 @@ vertexShaderSrc = BS.pack
     uniform float useFakeLighting;
     uniform float numberOfRows;
     uniform vec2 offset;
+    uniform vec4 clipPlane;
 
     const float density = 0.007;
     const float gradient = 1.5;
 
     void main() {
       vec4 worldPosition = model * vec4(position, 1.0);
+      gl_ClipDistance[0] = dot(worldPosition, clipPlane);
       vec4 positionRelativeToCam = view * worldPosition;
       gl_Position = projection * positionRelativeToCam;
       v_texCoord = texCoord / numberOfRows + offset;
@@ -131,20 +141,6 @@ fragmentShaderSrc = BS.pack
     }
   |]
 
-vertices :: V.Vector GLfloat
-vertices = V.fromList
-  [ -1.0, 0.5, 0.0   , 0.0, 0.0
-  , -1.0, -0.5, 0.0  , 0.0, 1.0
-  , 1.0, -0.5, 0.0   , 1.0, 1.0
-  , 1.0, 0.5, 0.0    , 1.0, 0.0
-  ]
-
-indices :: V.Vector GLuint
-indices = V.fromList
-  [ 0, 1, 3 -- Top left triangle
-  , 3, 1, 2 -- Bottom right triangle
-  ]
-
 maxLights :: Int
 maxLights = 4
 
@@ -165,6 +161,7 @@ data TexProgram = TexProgram
   , pSkyColorLoc         :: {-# UNPACK #-} !GLint
   , pNumberOfRows        :: {-# UNPACK #-} !GLint
   , pOffset              :: {-# UNPACK #-} !GLint
+  , pClipPlane           :: {-# UNPACK #-} !GLint
   }
 
 mkProgram :: ByteString -> ByteString -> IO TexProgram
@@ -202,6 +199,8 @@ mkProgram vertexShaderSrc0 fragmentShaderSrc0 = do
     glGetUniformLocation pProgram name
   pOffset <- withCString "offset" $ \name ->
     glGetUniformLocation pProgram name
+  pClipPlane <- withCString "clipPlane" $ \name ->
+    glGetUniformLocation pProgram name
   return TexProgram{..}
  where
   loadVertexShader = loadShader GL_VERTEX_SHADER vertexShaderSrc0
@@ -226,8 +225,9 @@ programSetUniforms
   -> Linear.V3 GLfloat
   -> Linear.M44 GLfloat
   -> Linear.M44 GLfloat
+  -> Linear.V4 GLfloat
   -> IO ()
-programSetUniforms p lights skyColor view proj = do
+programSetUniforms p lights skyColor view proj clipPlane = do
   with view $ \matrixPtr ->
     glUniformMatrix4fv (pViewLoc p) 1 GL_TRUE (castPtr matrixPtr)
   with proj $ \matrixPtr ->
@@ -235,8 +235,10 @@ programSetUniforms p lights skyColor view proj = do
   forM_ lightsWithLocs $ \(l, posLoc, colLoc, attLoc) ->
     setLightUniforms l posLoc colLoc attLoc
   glUniform3f (pSkyColorLoc p) r g b
+  glUniform4f (pClipPlane p) px py pz pw
  where
   Linear.V3 r g b = skyColor
+  Linear.V4 px py pz pw = clipPlane
   padded = padLights lights (pLightPosLoc p) (pLightColorLoc p)
   lightsWithLocs =
     zip4 padded (pLightPosLoc p) (pLightColorLoc p) (pLightAttenuationLoc p)
@@ -255,6 +257,7 @@ data Game = Game
   , gameGrasses        :: {-# UNPACK #-} !(IOVec Entity)
   , gameFerns          :: {-# UNPACK #-} !(IOVec Entity)
   , gameLamps          :: {-# UNPACK #-} !(IOVec Entity)
+  , gameWaterTiles     :: {-# UNPACK #-} !(IOVec WaterTile)
   , gameProgram        :: {-# UNPACK #-} !TexProgram
   , gameCamera         :: {-# UNPACK #-} !Camera
   , gameProj           :: {-# UNPACK #-} !(Linear.M44 GLfloat)
@@ -267,6 +270,11 @@ data Game = Game
   , gameTerrain2       :: {-# UNPACK #-} !Terrain.Terrain
   , gameSkyboxProgram  :: {-# UNPACK #-} !Skybox.SkyboxProgram
   , gameSkybox         :: {-# UNPACK #-} !Skybox.Skybox
+  , gameWaterProgram   :: {-# UNPACK #-} !Water.WaterProgram
+  , gameWater          :: {-# UNPACK #-} !Water.Water
+  , gameWaterBuffers   :: {-# UNPACK #-} !FrameBuffers.FrameBuffers
+  , gameLastTime       :: {-# UNPACK #-} !Clock.UTCTime
+  , gameElapsedTime    :: {-# UNPACK #-} !GLfloat
   , gameSkyColor       :: {-# UNPACK #-} !(Linear.V3 GLfloat)
   }
 
@@ -359,6 +367,7 @@ init w h = do
         lampModel
         0
       ]
+    waterTiles = [WaterTile 60 60 (-8)]
   pack <- loadTexturePack
     "res/grass.png" "res/mud.png" "res/grassFlowers.png" "res/path.png"
   blendMap <- loadTexture "res/blendMap.png"
@@ -369,6 +378,7 @@ init w h = do
     <*> V.unsafeThaw (V.fromList grassEntities)
     <*> V.unsafeThaw (V.fromList fernEntities)
     <*> V.unsafeThaw (V.fromList lampEntities)
+    <*> V.unsafeThaw (V.fromList waterTiles)
     <*> mkProgram vertexShaderSrc fragmentShaderSrc
     <*> pure camera
     <*> pure proj
@@ -388,9 +398,14 @@ init w h = do
       , "res/skybox/front.jpg"
       , "res/skybox/back.jpg"
       ]
+    <*> Water.mkProgram maxLights
+    <*> Water.mkWater
+    <*> FrameBuffers.init (fromIntegral w) (fromIntegral h)
+    <*> Clock.getCurrentTime
+    <*> pure 0
     <*> pure (Linear.V3 0.5 0.5 0.5)
  where
-  camera = Camera (Linear.V3 10 2 30) (Linear.V3 0 0 (-1)) (Linear.V3 0 1 0)
+  camera = Camera (Linear.V3 10 2 30) (Linear.V3 0 0 (-1)) (Linear.V3 0 1 0) 0 0
   proj = perspectiveMat w h
   light1 =
     Light (Linear.V3 0 1000 (-7000)) (Linear.V3 0.4 0.4 0.4) (Linear.V3 1 0 0)
@@ -404,9 +419,14 @@ init w h = do
 update :: S.Set GLFW.Key -> MouseInfo -> GLfloat -> Game -> IO Game
 update keys mouseInfo dt g0 =
   foldlM update' g0' [0..VM.length (gameEntities g0') - 1] >>=
-    (handleLeftClick mouseInfo >=> updateProjectiles)
+    (handleLeftClick mouseInfo >=> updateProjectiles >=> updateTime)
  where
-  camera' = (gameCamera g0) { cameraFront = mouseFront mouseInfo }
+  (pitch, yaw) = mouseOldPitchYaw mouseInfo
+  camera' = (gameCamera g0)
+    { cameraFront = mouseFront mouseInfo
+    , cameraPitch = pitch
+    , cameraYaw   = yaw
+    }
   camera'' = updateCamera keys (30 * dt) camera'
 
   -- Clamps camera y value to the terrain height.
@@ -440,6 +460,13 @@ updateProjectiles g
       then FixedArray.delete ps' i
       else pure ps'
 
+updateTime :: Game -> IO Game
+updateTime g = do
+  currentTime <- Clock.getCurrentTime
+  let diffTime = realToFrac . Clock.nominalDiffTimeToSeconds
+               $ Clock.diffUTCTime currentTime (gameLastTime g)
+  return g { gameElapsedTime = diffTime, gameLastTime = currentTime }
+
 handleLeftClick :: MouseInfo -> Game -> IO Game
 handleLeftClick info g = case mouseLeftCoords info of
   Just (x, y) ->
@@ -464,7 +491,37 @@ handleLeftClick info g = case mouseLeftCoords info of
 draw :: Game -> IO ()
 draw g = do
   let view = toViewMatrix $ gameCamera g
+  waterTile <- VM.read (gameWaterTiles g) 0
 
+  glEnable GL_CLIP_DISTANCE0
+  FrameBuffers.bindReflectionFrameBuffer $ gameWaterBuffers g
+  let
+    distance = 2 * cameraPos (gameCamera g) ^. Linear._y - tileHeight waterTile
+    camera'  = (gameCamera g) { cameraPos = cameraPos (gameCamera g)
+                                          & Linear._y %~ (subtract distance)
+                              }
+    view' = toViewMatrix $ invertPitch camera'
+  drawScene g view' (Linear.V4 0 1 0 (-tileHeight waterTile + 1))
+
+  FrameBuffers.bindRefractionFrameBuffer $ gameWaterBuffers g
+  drawScene g view (Linear.V4 0 (-1) 0 (tileHeight waterTile + 1))
+  glDisable GL_CLIP_DISTANCE0
+
+  FrameBuffers.unbindFrameBuffer $ gameWaterBuffers g
+  drawScene g view (Linear.V4 0 0 0 0)
+
+  Water.use $ gameWaterProgram g
+  Water.update (gameWater g) (gameElapsedTime g) >>= Water.setUniforms
+    (gameWaterProgram g) view (gameProj g) (cameraPos (gameCamera g))
+  Water.setLights (gameWaterProgram g) (gameLights g)
+  Water.setTextures (gameWaterProgram g) (gameWaterBuffers g) (gameWater g)
+  forM_ [0..VM.length (gameWaterTiles g) - 1] $ \i -> do
+    tile <- VM.read (gameWaterTiles g) i
+    Water.drawTile (gameWater g) tile (gameWaterProgram g)
+  Water.unbind
+
+drawScene :: Game -> Linear.M44 GLfloat -> Linear.V4 GLfloat -> IO ()
+drawScene g view clipPlane = do
   case gameSkyColor g of
     Linear.V3 red green blue -> do
       glClearColor red green blue 1.0
@@ -478,12 +535,13 @@ draw g = do
     (gameSkyColor g)
     view
     (gameProj g)
+    clipPlane
   Terrain.draw (gameTerrain1 g) (gameTerrainProgram g)
   Terrain.draw (gameTerrain2 g) (gameTerrainProgram g)
 
   glUseProgram $ pProgram $ gameProgram g
   programSetUniforms
-    (gameProgram g) (gameLights g) (gameSkyColor g) view (gameProj g)
+    (gameProgram g) (gameLights g) (gameSkyColor g) view (gameProj g) clipPlane
   programSetTexture (gameProgram g) (gameTexture g)
 
   glBindVertexArray $ modelVao $ gameRawModel g
