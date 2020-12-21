@@ -501,10 +501,10 @@ draw g = do
                                           & Linear._y %~ (subtract distance)
                               }
     view' = toViewMatrix $ invertPitch camera'
-  drawScene g view' (Linear.V4 0 1 0 (-tileHeight waterTile))
+  drawScene g view' (Linear.V4 0 1 0 (-tileHeight waterTile + 1))
 
   FrameBuffers.bindRefractionFrameBuffer $ gameWaterBuffers g
-  drawScene g view (Linear.V4 0 (-1) 0 (tileHeight waterTile))
+  drawScene g view (Linear.V4 0 (-1) 0 (tileHeight waterTile + 1))
   glDisable GL_CLIP_DISTANCE0
 
   FrameBuffers.unbindFrameBuffer $ gameWaterBuffers g
@@ -514,15 +514,11 @@ draw g = do
   Water.update (gameWater g) (gameElapsedTime g) >>= Water.setUniforms
     (gameWaterProgram g) view (gameProj g) (cameraPos (gameCamera g))
   Water.setLights (gameWaterProgram g) (gameLights g)
-  Water.setTextures
-    (gameWaterProgram g)
-    (FrameBuffers.reflectionTexture (gameWaterBuffers g))
-    (FrameBuffers.refractionTexture (gameWaterBuffers g))
-    (Water.dudvMap (gameWater g))
-    (Water.normalMap (gameWater g))
+  Water.setTextures (gameWaterProgram g) (gameWaterBuffers g) (gameWater g)
   forM_ [0..VM.length (gameWaterTiles g) - 1] $ \i -> do
     tile <- VM.read (gameWaterTiles g) i
     Water.drawTile (gameWater g) tile (gameWaterProgram g)
+  Water.unbind
 
 drawScene :: Game -> Linear.M44 GLfloat -> Linear.V4 GLfloat -> IO ()
 drawScene g view clipPlane = do
