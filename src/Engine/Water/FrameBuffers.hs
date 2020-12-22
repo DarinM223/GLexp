@@ -56,12 +56,12 @@ init w h = FrameBuffers w h
 
 delete :: FrameBuffers -> IO ()
 delete bufs = do
-  with (reflectionFrameBuffer bufs)  $ \ptr -> glDeleteFramebuffers 1 ptr
-  with (reflectionTexture bufs)      $ \ptr -> glDeleteTextures 1 ptr
-  with (reflectionDepthBuffer bufs)  $ \ptr -> glDeleteRenderbuffers 1 ptr
-  with (refractionFrameBuffer bufs)  $ \ptr -> glDeleteFramebuffers 1 ptr
-  with (refractionTexture bufs)      $ \ptr -> glDeleteTextures 1 ptr
-  with (refractionDepthTexture bufs) $ \ptr -> glDeleteTextures 1 ptr
+  with (reflectionFrameBuffer bufs)  $ glDeleteFramebuffers 1
+  with (reflectionTexture bufs)      $ glDeleteTextures 1
+  with (reflectionDepthBuffer bufs)  $ glDeleteRenderbuffers 1
+  with (refractionFrameBuffer bufs)  $ glDeleteFramebuffers 1
+  with (refractionTexture bufs)      $ glDeleteTextures 1
+  with (refractionDepthTexture bufs) $ glDeleteTextures 1
 
 bindFrameBuffer :: GLuint -> GLsizei -> GLsizei -> IO ()
 bindFrameBuffer frameBuffer w h = do

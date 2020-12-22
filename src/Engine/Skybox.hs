@@ -175,23 +175,20 @@ generateSkyboxModel = V.unsafeWith vertexBuffer $ \vPtr -> do
   stride = fromIntegral $ sizeOf (undefined :: GLfloat) * 3
 
 data Program = Program
-  { sProgram     :: {-# UNPACK #-} !GLuint
-  , sViewLoc     :: {-# UNPACK #-} !GLint
-  , sProjLoc     :: {-# UNPACK #-} !GLint
-  , sSkyColorLoc :: {-# UNPACK #-} !GLint
+  { program     :: {-# UNPACK #-} !GLuint
+  , viewLoc     :: {-# UNPACK #-} !GLint
+  , projLoc     :: {-# UNPACK #-} !GLint
+  , skyColorLoc :: {-# UNPACK #-} !GLint
   }
 
 mkProgram :: IO Program
 mkProgram =
   bracket loadVertexShader glDeleteShader $ \vertexShader ->
   bracket loadFragmentShader glDeleteShader $ \fragmentShader -> do
-    sProgram <- linkShaders [vertexShader, fragmentShader]
-    sViewLoc <- withCString "view" $ \name ->
-      glGetUniformLocation sProgram name
-    sProjLoc <- withCString "projection" $ \name ->
-      glGetUniformLocation sProgram name
-    sSkyColorLoc <- withCString "skyColor" $ \name ->
-      glGetUniformLocation sProgram name
+    program <- linkShaders [vertexShader, fragmentShader]
+    viewLoc <- withCString "view" $ glGetUniformLocation program
+    projLoc <- withCString "projection" $ glGetUniformLocation program
+    skyColorLoc <- withCString "skyColor" $ glGetUniformLocation program
     return Program{..}
  where
   loadVertexShader = loadShader GL_VERTEX_SHADER vertexShaderSrc
@@ -204,14 +201,12 @@ setUniforms
   -> Linear.V3 GLfloat
   -> IO ()
 setUniforms p view proj (Linear.V3 r g b) = do
-  with view $ \matrixPtr ->
-    glUniformMatrix4fv (sViewLoc p) 1 GL_TRUE (castPtr matrixPtr)
-  with proj $ \matrixPtr ->
-    glUniformMatrix4fv (sProjLoc p) 1 GL_TRUE (castPtr matrixPtr)
-  glUniform3f (sSkyColorLoc p) r g b
+  with view $ glUniformMatrix4fv (viewLoc p) 1 GL_TRUE . castPtr
+  with proj $ glUniformMatrix4fv (projLoc p) 1 GL_TRUE . castPtr
+  glUniform3f (skyColorLoc p) r g b
 
 use :: Program -> IO ()
-use p = glUseProgram $ sProgram p
+use p = glUseProgram $ program p
 
 draw :: Skybox -> IO ()
 draw s = do

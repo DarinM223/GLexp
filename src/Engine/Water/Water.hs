@@ -148,50 +148,50 @@ fragmentShaderSrc maxLights = BS.pack (shaderHeader maxLights) <> BS.pack
   |]
 
 data Program = Program
-  { wProgram              :: {-# UNPACK #-} !GLuint
-  , wModelLoc             :: {-# UNPACK #-} !GLint
-  , wViewLoc              :: {-# UNPACK #-} !GLint
-  , wProjLoc              :: {-# UNPACK #-} !GLint
-  , wLightPositionLoc     :: ![GLint]
-  , wCameraPositionLoc    :: {-# UNPACK #-} !GLint
-  , wReflectionTextureLoc :: {-# UNPACK #-} !GLint
-  , wRefractionTextureLoc :: {-# UNPACK #-} !GLint
-  , wDudvMapLoc           :: {-# UNPACK #-} !GLint
-  , wNormalMapLoc         :: {-# UNPACK #-} !GLint
-  , wDepthMapLoc          :: {-# UNPACK #-} !GLint
-  , wLightColorLoc        :: ![GLint]
-  , wLightAttenuationLoc  :: ![GLint]
-  , wMoveFactorLoc        :: {-# UNPACK #-} !GLint
+  { program              :: {-# UNPACK #-} !GLuint
+  , modelLoc             :: {-# UNPACK #-} !GLint
+  , viewLoc              :: {-# UNPACK #-} !GLint
+  , projLoc              :: {-# UNPACK #-} !GLint
+  , lightPositionLoc     :: ![GLint]
+  , cameraPositionLoc    :: {-# UNPACK #-} !GLint
+  , reflectionTextureLoc :: {-# UNPACK #-} !GLint
+  , refractionTextureLoc :: {-# UNPACK #-} !GLint
+  , dudvMapLoc           :: {-# UNPACK #-} !GLint
+  , normalMapLoc         :: {-# UNPACK #-} !GLint
+  , depthMapLoc          :: {-# UNPACK #-} !GLint
+  , lightColorLoc        :: ![GLint]
+  , lightAttenuationLoc  :: ![GLint]
+  , moveFactorLoc        :: {-# UNPACK #-} !GLint
   }
 
 mkProgram :: Int -> IO Program
 mkProgram maxLights = do
-  wProgram <-
+  program <-
     bracket loadVertexShader glDeleteShader $ \vertexShader ->
     bracket loadFragmentShader glDeleteShader $ \fragmentShader ->
       linkShaders [vertexShader, fragmentShader]
-  wModelLoc <- withCString "model" $ glGetUniformLocation wProgram
-  wViewLoc <- withCString "view" $ glGetUniformLocation wProgram
-  wProjLoc <- withCString "projection" $ glGetUniformLocation wProgram
-  wLightPositionLoc <- forM [0..maxLights - 1] $ \i ->
+  modelLoc <- withCString "model" $ glGetUniformLocation program
+  viewLoc <- withCString "view" $ glGetUniformLocation program
+  projLoc <- withCString "projection" $ glGetUniformLocation program
+  lightPositionLoc <- forM [0..maxLights - 1] $ \i ->
     withCString ("lightPosition[" ++ show i ++ "]") $
-      glGetUniformLocation wProgram
-  wCameraPositionLoc <- withCString "cameraPosition" $
-    glGetUniformLocation wProgram
-  wReflectionTextureLoc <- withCString "reflectionTexture" $
-    glGetUniformLocation wProgram
-  wRefractionTextureLoc <- withCString "refractionTexture" $
-    glGetUniformLocation wProgram
-  wDudvMapLoc <- withCString "dudvMap" $ glGetUniformLocation wProgram
-  wNormalMapLoc <- withCString "normalMap" $ glGetUniformLocation wProgram
-  wDepthMapLoc <- withCString "depthMap" $ glGetUniformLocation wProgram
-  wLightColorLoc <- forM [0..maxLights - 1] $ \i ->
+      glGetUniformLocation program
+  cameraPositionLoc <- withCString "cameraPosition" $
+    glGetUniformLocation program
+  reflectionTextureLoc <- withCString "reflectionTexture" $
+    glGetUniformLocation program
+  refractionTextureLoc <- withCString "refractionTexture" $
+    glGetUniformLocation program
+  dudvMapLoc <- withCString "dudvMap" $ glGetUniformLocation program
+  normalMapLoc <- withCString "normalMap" $ glGetUniformLocation program
+  depthMapLoc <- withCString "depthMap" $ glGetUniformLocation program
+  lightColorLoc <- forM [0..maxLights - 1] $ \i ->
     withCString ("lightColor[" ++ show i ++ "]") $
-      glGetUniformLocation wProgram
-  wLightAttenuationLoc <- forM [0..maxLights - 1] $ \i ->
+      glGetUniformLocation program
+  lightAttenuationLoc <- forM [0..maxLights - 1] $ \i ->
     withCString ("attenuation[" ++ show i ++ "]") $
-      glGetUniformLocation wProgram
-  wMoveFactorLoc <- withCString "moveFactor" $ glGetUniformLocation wProgram
+      glGetUniformLocation program
+  moveFactorLoc <- withCString "moveFactor" $ glGetUniformLocation program
   return Program{..}
  where
   loadVertexShader = loadShader GL_VERTEX_SHADER (vertexShaderSrc maxLights)
@@ -199,7 +199,7 @@ mkProgram maxLights = do
     loadShader GL_FRAGMENT_SHADER (fragmentShaderSrc maxLights)
 
 use :: Program -> IO ()
-use = glUseProgram . wProgram
+use = glUseProgram . program
 
 setUniforms :: Program
             -> Linear.M44 GLfloat
@@ -208,12 +208,10 @@ setUniforms :: Program
             -> GLfloat
             -> IO ()
 setUniforms p view proj cameraPosition moveFactor = do
-  glUniform3f (wCameraPositionLoc p) posx posy posz
-  with view $ \matrixPtr ->
-    glUniformMatrix4fv (wViewLoc p) 1 GL_TRUE (castPtr matrixPtr)
-  with proj $ \matrixPtr ->
-    glUniformMatrix4fv (wProjLoc p) 1 GL_TRUE (castPtr matrixPtr)
-  glUniform1f (wMoveFactorLoc p) moveFactor
+  glUniform3f (cameraPositionLoc p) posx posy posz
+  with view $ glUniformMatrix4fv (viewLoc p) 1 GL_TRUE . castPtr
+  with proj $ glUniformMatrix4fv (projLoc p) 1 GL_TRUE . castPtr
+  glUniform1f (moveFactorLoc p) moveFactor
  where Linear.V3 posx posy posz = cameraPosition
 
 setLights :: Program -> [Light] -> IO ()
@@ -225,31 +223,31 @@ setLights p lights = forM_ lightsWithLocs $ \(l, posLoc, colLoc, attLoc) -> do
   glUniform3f colLoc cx cy cz
   glUniform3f attLoc ax ay az
  where
-  padded = padLights lights (wLightPositionLoc p) (wLightColorLoc p)
+  padded = padLights lights (lightPositionLoc p) (lightColorLoc p)
   lightsWithLocs = zip4 padded
-    (wLightPositionLoc p) (wLightColorLoc p) (wLightAttenuationLoc p)
+    (lightPositionLoc p) (lightColorLoc p) (lightAttenuationLoc p)
 
 setTextures :: Program -> FrameBuffers -> Water -> IO ()
 setTextures p bufs w = do
   glActiveTexture GL_TEXTURE0
   glBindTexture GL_TEXTURE_2D $ reflectionTexture bufs
-  glUniform1i (wReflectionTextureLoc p) 0
+  glUniform1i (reflectionTextureLoc p) 0
 
   glActiveTexture GL_TEXTURE1
   glBindTexture GL_TEXTURE_2D $ refractionTexture bufs
-  glUniform1i (wRefractionTextureLoc p) 1
+  glUniform1i (refractionTextureLoc p) 1
 
   glActiveTexture GL_TEXTURE2
   glBindTexture GL_TEXTURE_2D $ textureID $ dudvMap w
-  glUniform1i (wDudvMapLoc p) 2
+  glUniform1i (dudvMapLoc p) 2
 
   glActiveTexture GL_TEXTURE3
   glBindTexture GL_TEXTURE_2D $ textureID $ normalMap w
-  glUniform1i (wNormalMapLoc p) 3
+  glUniform1i (normalMapLoc p) 3
 
   glActiveTexture GL_TEXTURE4
   glBindTexture GL_TEXTURE_2D $ refractionDepthTexture bufs
-  glUniform1i (wDepthMapLoc p) 4
+  glUniform1i (depthMapLoc p) 4
 
   glEnable GL_BLEND
   glBlendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
@@ -285,8 +283,7 @@ update w secs = do
 
 drawTile :: Water -> WaterTile -> Program -> IO ()
 drawTile w tile p = do
-  with matrix $ \matrixPtr ->
-    glUniformMatrix4fv (wModelLoc p) 1 GL_TRUE (castPtr matrixPtr)
+  with matrix $ glUniformMatrix4fv (modelLoc p) 1 GL_TRUE . castPtr
 
   glBindVertexArray $ modelVao $ waterRawModel w
   glDrawArrays GL_TRIANGLES 0 $ modelVertexCount $ waterRawModel w

@@ -303,65 +303,54 @@ barycentric (Linear.V3 p1x p1y p1z)
   l3 = 1.0 - l1 - l2
 
 data Program = Program
-  { tProgram             :: {-# UNPACK #-} !GLuint
-  , tBackTextureLoc      :: {-# UNPACK #-} !GLint
-  , tRTextureLoc         :: {-# UNPACK #-} !GLint
-  , tGTextureLoc         :: {-# UNPACK #-} !GLint
-  , tBTextureLoc         :: {-# UNPACK #-} !GLint
-  , tBlendMapLoc         :: {-# UNPACK #-} !GLint
-  , tModelLoc            :: {-# UNPACK #-} !GLint
-  , tViewLoc             :: {-# UNPACK #-} !GLint
-  , tProjLoc             :: {-# UNPACK #-} !GLint
-  , tLightPosLoc         :: ![GLint]
-  , tLightColorLoc       :: ![GLint]
-  , tLightAttenuationLoc :: ![GLint]
-  , tShineDamperLoc      :: {-# UNPACK #-} !GLint
-  , tReflectivityLoc     :: {-# UNPACK #-} !GLint
-  , tSkyColorLoc         :: {-# UNPACK #-} !GLint
-  , tClipPlaneLoc        :: {-# UNPACK #-} !GLint
+  { program             :: {-# UNPACK #-} !GLuint
+  , backTextureLoc      :: {-# UNPACK #-} !GLint
+  , rTextureLoc         :: {-# UNPACK #-} !GLint
+  , gTextureLoc         :: {-# UNPACK #-} !GLint
+  , bTextureLoc         :: {-# UNPACK #-} !GLint
+  , blendMapLoc         :: {-# UNPACK #-} !GLint
+  , modelLoc            :: {-# UNPACK #-} !GLint
+  , viewLoc             :: {-# UNPACK #-} !GLint
+  , projLoc             :: {-# UNPACK #-} !GLint
+  , lightPosLoc         :: ![GLint]
+  , lightColorLoc       :: ![GLint]
+  , lightAttenuationLoc :: ![GLint]
+  , shineDamperLoc      :: {-# UNPACK #-} !GLint
+  , reflectivityLoc     :: {-# UNPACK #-} !GLint
+  , skyColorLoc         :: {-# UNPACK #-} !GLint
+  , clipPlaneLoc        :: {-# UNPACK #-} !GLint
   }
 
 mkProgram :: Int -> IO Program
 mkProgram maxLights = do
-  tProgram <-
+  program <-
     bracket loadVertexShader glDeleteShader $ \vertexShader ->
     bracket loadFragmentShader glDeleteShader $ \fragmentShader ->
       linkShaders [vertexShader, fragmentShader]
 
-  tBackTextureLoc <- withCString "backgroundTexture" $ \name ->
-    glGetUniformLocation tProgram name
-  tRTextureLoc <- withCString "rTexture" $ \name ->
-    glGetUniformLocation tProgram name
-  tGTextureLoc <- withCString "gTexture" $ \name ->
-    glGetUniformLocation tProgram name
-  tBTextureLoc <- withCString "bTexture" $ \name ->
-    glGetUniformLocation tProgram name
-  tBlendMapLoc <- withCString "blendMap" $ \name ->
-    glGetUniformLocation tProgram name
+  backTextureLoc <- withCString "backgroundTexture" $
+    glGetUniformLocation program
+  rTextureLoc <- withCString "rTexture" $ glGetUniformLocation program
+  gTextureLoc <- withCString "gTexture" $ glGetUniformLocation program
+  bTextureLoc <- withCString "bTexture" $ glGetUniformLocation program
+  blendMapLoc <- withCString "blendMap" $ glGetUniformLocation program
 
-  tModelLoc <- withCString "model" $ \name ->
-    glGetUniformLocation tProgram name
-  tViewLoc <- withCString "view" $ \name ->
-    glGetUniformLocation tProgram name
-  tProjLoc <- withCString "projection" $ \name ->
-    glGetUniformLocation tProgram name
-  tLightPosLoc <- forM [0..maxLights - 1] $ \i ->
-    withCString ("lightPosition[" ++ show i ++ "]") $ \name ->
-      glGetUniformLocation tProgram name
-  tLightColorLoc <- forM [0..maxLights - 1] $ \i ->
-    withCString ("lightColor[" ++ show i ++ "]") $ \name ->
-      glGetUniformLocation tProgram name
-  tLightAttenuationLoc <- forM [0..maxLights - 1] $ \i ->
-    withCString ("attenuation[" ++ show i ++ "]") $ \name ->
-      glGetUniformLocation tProgram name
-  tShineDamperLoc <- withCString "shineDamper" $ \name ->
-    glGetUniformLocation tProgram name
-  tReflectivityLoc <- withCString "reflectivity" $ \name ->
-    glGetUniformLocation tProgram name
-  tSkyColorLoc <- withCString "skyColor" $ \name ->
-    glGetUniformLocation tProgram name
-  tClipPlaneLoc <- withCString "clipPlane" $ \name ->
-    glGetUniformLocation tProgram name
+  modelLoc <- withCString "model" $ glGetUniformLocation program
+  viewLoc <- withCString "view" $ glGetUniformLocation program
+  projLoc <- withCString "projection" $ glGetUniformLocation program
+  lightPosLoc <- forM [0..maxLights - 1] $ \i ->
+    withCString ("lightPosition[" ++ show i ++ "]") $
+      glGetUniformLocation program
+  lightColorLoc <- forM [0..maxLights - 1] $ \i ->
+    withCString ("lightColor[" ++ show i ++ "]") $
+      glGetUniformLocation program
+  lightAttenuationLoc <- forM [0..maxLights - 1] $ \i ->
+    withCString ("attenuation[" ++ show i ++ "]") $
+      glGetUniformLocation program
+  shineDamperLoc <- withCString "shineDamper" $ glGetUniformLocation program
+  reflectivityLoc <- withCString "reflectivity" $ glGetUniformLocation program
+  skyColorLoc <- withCString "skyColor" $ glGetUniformLocation program
+  clipPlaneLoc <- withCString "clipPlane" $ glGetUniformLocation program
   return Program{..}
  where
   loadVertexShader = loadShader GL_VERTEX_SHADER $ vertexShaderSrc maxLights
@@ -380,50 +369,47 @@ setUniforms
 setUniforms t p lights skyColor view proj clipPlane = do
   glActiveTexture GL_TEXTURE0
   glBindTexture GL_TEXTURE_2D $ textureID packBackground
-  glUniform1i (tBackTextureLoc p) 0
+  glUniform1i (backTextureLoc p) 0
 
   glActiveTexture GL_TEXTURE1
   glBindTexture GL_TEXTURE_2D $ textureID packR
-  glUniform1i (tRTextureLoc p) 1
+  glUniform1i (rTextureLoc p) 1
 
   glActiveTexture GL_TEXTURE2
   glBindTexture GL_TEXTURE_2D $ textureID packG
-  glUniform1i (tGTextureLoc p) 2
+  glUniform1i (gTextureLoc p) 2
 
   glActiveTexture GL_TEXTURE3
   glBindTexture GL_TEXTURE_2D $ textureID packB
-  glUniform1i (tBTextureLoc p) 3
+  glUniform1i (bTextureLoc p) 3
 
   glActiveTexture GL_TEXTURE4
   glBindTexture GL_TEXTURE_2D $ textureID $ terrainBlendMap t
-  glUniform1i (tBlendMapLoc p) 4
+  glUniform1i (blendMapLoc p) 4
 
-  glUniform1f (tShineDamperLoc p) $ textureShineDamper packBackground
-  glUniform1f (tReflectivityLoc p) $ textureReflectivity packBackground
+  glUniform1f (shineDamperLoc p) $ textureShineDamper packBackground
+  glUniform1f (reflectivityLoc p) $ textureReflectivity packBackground
 
-  with view $ \matrixPtr ->
-    glUniformMatrix4fv (tViewLoc p) 1 GL_TRUE (castPtr matrixPtr)
-  with proj $ \matrixPtr ->
-    glUniformMatrix4fv (tProjLoc p) 1 GL_TRUE (castPtr matrixPtr)
+  with view $ glUniformMatrix4fv (viewLoc p) 1 GL_TRUE . castPtr
+  with proj $ glUniformMatrix4fv (projLoc p) 1 GL_TRUE . castPtr
   forM_ lightsWithLocs $ \(l, posLoc, colLoc, attLoc) ->
     setLightUniforms l posLoc colLoc attLoc
-  glUniform3f (tSkyColorLoc p) r g b
-  glUniform4f (tClipPlaneLoc p) px py pz pw
+  glUniform3f (skyColorLoc p) r g b
+  glUniform4f (clipPlaneLoc p) px py pz pw
  where
   TexturePack{..} = terrainPack t
   Linear.V3 r g b = skyColor
   Linear.V4 px py pz pw = clipPlane
-  padded = padLights lights (tLightPosLoc p) (tLightColorLoc p)
+  padded = padLights lights (lightPosLoc p) (lightColorLoc p)
   lightsWithLocs =
-    zip4 padded (tLightPosLoc p) (tLightColorLoc p) (tLightAttenuationLoc p)
+    zip4 padded (lightPosLoc p) (lightColorLoc p) (lightAttenuationLoc p)
 
 use :: Program -> IO ()
-use p = glUseProgram $ tProgram p
+use p = glUseProgram $ program p
 
 draw :: Terrain -> Program -> IO ()
 draw t p = do
-  with model $ \matrixPtr ->
-    glUniformMatrix4fv (tModelLoc p) 1 GL_TRUE (castPtr matrixPtr)
+  with model $ glUniformMatrix4fv (modelLoc p) 1 GL_TRUE . castPtr
 
   glBindVertexArray $ modelVao $ terrainRawModel t
   glDrawElements

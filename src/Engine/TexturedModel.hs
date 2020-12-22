@@ -125,60 +125,50 @@ fragmentShaderSrc maxLights = BS.pack (shaderHeader maxLights) <> BS.pack
   |]
 
 data Program = Program
-  { pProgram             :: {-# UNPACK #-} !GLuint
-  , pTextureLoc          :: {-# UNPACK #-} !GLint
-  , pModelLoc            :: {-# UNPACK #-} !GLint
-  , pViewLoc             :: {-# UNPACK #-} !GLint
-  , pProjLoc             :: {-# UNPACK #-} !GLint
-  , pLightPosLoc         :: ![GLint]
-  , pLightColorLoc       :: ![GLint]
-  , pLightAttenuationLoc :: ![GLint]
-  , pShineDamperLoc      :: {-# UNPACK #-} !GLint
-  , pReflectivityLoc     :: {-# UNPACK #-} !GLint
-  , pFakeLightingLoc     :: {-# UNPACK #-} !GLint
-  , pSkyColorLoc         :: {-# UNPACK #-} !GLint
-  , pNumberOfRows        :: {-# UNPACK #-} !GLint
-  , pOffset              :: {-# UNPACK #-} !GLint
-  , pClipPlane           :: {-# UNPACK #-} !GLint
+  { program             :: {-# UNPACK #-} !GLuint
+  , textureLoc          :: {-# UNPACK #-} !GLint
+  , modelLoc            :: {-# UNPACK #-} !GLint
+  , viewLoc             :: {-# UNPACK #-} !GLint
+  , projLoc             :: {-# UNPACK #-} !GLint
+  , lightPosLoc         :: ![GLint]
+  , lightColorLoc       :: ![GLint]
+  , lightAttenuationLoc :: ![GLint]
+  , shineDamperLoc      :: {-# UNPACK #-} !GLint
+  , reflectivityLoc     :: {-# UNPACK #-} !GLint
+  , fakeLightingLoc     :: {-# UNPACK #-} !GLint
+  , skyColorLoc         :: {-# UNPACK #-} !GLint
+  , numberOfRowsLoc     :: {-# UNPACK #-} !GLint
+  , offsetLoc           :: {-# UNPACK #-} !GLint
+  , clipPlaneLoc        :: {-# UNPACK #-} !GLint
   }
 
 mkProgram :: Int -> IO Program
 mkProgram maxLights = do
-  pProgram <-
+  program <-
     bracket loadVertexShader glDeleteShader $ \vertexShader ->
     bracket loadFragmentShader glDeleteShader $ \fragmentShader ->
       linkShaders [vertexShader, fragmentShader]
-  pTextureLoc <- withCString "texture" $ \name ->
-    glGetUniformLocation pProgram name
-  pModelLoc <- withCString "model" $ \name ->
-    glGetUniformLocation pProgram name
-  pViewLoc <- withCString "view" $ \name ->
-    glGetUniformLocation pProgram name
-  pProjLoc <- withCString "projection" $ \name ->
-    glGetUniformLocation pProgram name
-  pLightPosLoc <- forM [0..maxLights - 1] $ \i ->
-    withCString ("lightPosition[" ++ show i ++ "]") $ \name ->
-      glGetUniformLocation pProgram name
-  pLightColorLoc <- forM [0..maxLights - 1] $ \i ->
-    withCString ("lightColor[" ++ show i ++ "]") $ \name ->
-      glGetUniformLocation pProgram name
-  pLightAttenuationLoc <- forM [0..maxLights - 1] $ \i ->
-    withCString ("attenuation[" ++ show i ++ "]") $ \name ->
-      glGetUniformLocation pProgram name
-  pShineDamperLoc <- withCString "shineDamper" $ \name ->
-    glGetUniformLocation pProgram name
-  pReflectivityLoc <- withCString "reflectivity" $ \name ->
-    glGetUniformLocation pProgram name
-  pFakeLightingLoc <- withCString "useFakeLighting" $ \name ->
-    glGetUniformLocation pProgram name
-  pSkyColorLoc <- withCString "skyColor" $ \name ->
-    glGetUniformLocation pProgram name
-  pNumberOfRows <- withCString "numberOfRows" $ \name ->
-    glGetUniformLocation pProgram name
-  pOffset <- withCString "offset" $ \name ->
-    glGetUniformLocation pProgram name
-  pClipPlane <- withCString "clipPlane" $ \name ->
-    glGetUniformLocation pProgram name
+  textureLoc <- withCString "texture" $ glGetUniformLocation program
+  modelLoc <- withCString "model" $ glGetUniformLocation program
+  viewLoc <- withCString "view" $ glGetUniformLocation program
+  projLoc <- withCString "projection" $ glGetUniformLocation program
+  lightPosLoc <- forM [0..maxLights - 1] $ \i ->
+    withCString ("lightPosition[" ++ show i ++ "]") $
+      glGetUniformLocation program
+  lightColorLoc <- forM [0..maxLights - 1] $ \i ->
+    withCString ("lightColor[" ++ show i ++ "]") $
+      glGetUniformLocation program
+  lightAttenuationLoc <- forM [0..maxLights - 1] $ \i ->
+    withCString ("attenuation[" ++ show i ++ "]") $
+      glGetUniformLocation program
+  shineDamperLoc <- withCString "shineDamper" $ glGetUniformLocation program
+  reflectivityLoc <- withCString "reflectivity" $ glGetUniformLocation program
+  fakeLightingLoc <- withCString "useFakeLighting" $
+    glGetUniformLocation program
+  skyColorLoc <- withCString "skyColor" $ glGetUniformLocation program
+  numberOfRowsLoc <- withCString "numberOfRows" $ glGetUniformLocation program
+  offsetLoc <- withCString "offset" $ glGetUniformLocation program
+  clipPlaneLoc <- withCString "clipPlane" $ glGetUniformLocation program
   return Program{..}
  where
   loadVertexShader = loadShader GL_VERTEX_SHADER $ vertexShaderSrc maxLights
@@ -186,7 +176,7 @@ mkProgram maxLights = do
     loadShader GL_FRAGMENT_SHADER $ fragmentShaderSrc maxLights
 
 use :: Program -> IO ()
-use = glUseProgram . pProgram
+use = glUseProgram . program
 
 setTexture :: Program -> Texture -> IO ()
 setTexture p tex = do
@@ -195,11 +185,11 @@ setTexture p tex = do
     else glEnable GL_CULL_FACE >> glCullFace GL_BACK
   glActiveTexture GL_TEXTURE0
   glBindTexture GL_TEXTURE_2D $ textureID tex
-  glUniform1i (pTextureLoc p) 0
-  glUniform1f (pShineDamperLoc p) (textureShineDamper tex)
-  glUniform1f (pReflectivityLoc p) (textureReflectivity tex)
-  glUniform1f (pFakeLightingLoc p) (textureUseFakeLighting tex)
-  glUniform1f (pNumberOfRows p) $ fromIntegral $ textureNumRows tex
+  glUniform1i (textureLoc p) 0
+  glUniform1f (shineDamperLoc p) (textureShineDamper tex)
+  glUniform1f (reflectivityLoc p) (textureReflectivity tex)
+  glUniform1f (fakeLightingLoc p) (textureUseFakeLighting tex)
+  glUniform1f (numberOfRowsLoc p) $ fromIntegral $ textureNumRows tex
 
 setUniforms
   :: Program
@@ -210,24 +200,22 @@ setUniforms
   -> Linear.V4 GLfloat
   -> IO ()
 setUniforms p lights skyColor view proj clipPlane = do
-  with view $ \matrixPtr ->
-    glUniformMatrix4fv (pViewLoc p) 1 GL_TRUE (castPtr matrixPtr)
-  with proj $ \matrixPtr ->
-    glUniformMatrix4fv (pProjLoc p) 1 GL_TRUE (castPtr matrixPtr)
+  with view $ glUniformMatrix4fv (viewLoc p) 1 GL_TRUE . castPtr
+  with proj $ glUniformMatrix4fv (projLoc p) 1 GL_TRUE . castPtr
   forM_ lightsWithLocs $ \(l, posLoc, colLoc, attLoc) ->
     setLightUniforms l posLoc colLoc attLoc
-  glUniform3f (pSkyColorLoc p) r g b
-  glUniform4f (pClipPlane p) px py pz pw
+  glUniform3f (skyColorLoc p) r g b
+  glUniform4f (clipPlaneLoc p) px py pz pw
  where
   Linear.V3 r g b = skyColor
   Linear.V4 px py pz pw = clipPlane
-  padded = padLights lights (pLightPosLoc p) (pLightColorLoc p)
+  padded = padLights lights (lightPosLoc p) (lightColorLoc p)
   lightsWithLocs =
-    zip4 padded (pLightPosLoc p) (pLightColorLoc p) (pLightAttenuationLoc p)
+    zip4 padded (lightPosLoc p) (lightColorLoc p) (lightAttenuationLoc p)
 
 setOffset :: Program -> GLfloat -> GLfloat -> IO ()
-setOffset p = glUniform2f (pOffset p)
+setOffset p = glUniform2f (offsetLoc p)
 
 setModel :: Program -> Linear.M44 GLfloat -> IO ()
-setModel p model = with model $ \matrixPtr ->
-  glUniformMatrix4fv (pModelLoc p) 1 GL_TRUE (castPtr matrixPtr)
+setModel p model = with model $
+  glUniformMatrix4fv (modelLoc p) 1 GL_TRUE . castPtr
