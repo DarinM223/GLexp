@@ -50,12 +50,12 @@ data Game = Game
   , gameProjectiles    :: {-# UNPACK #-} !(FixedArray.Array IO Projectile)
   , gameTexture        :: {-# UNPACK #-} !Texture
   , gameRawModel       :: {-# UNPACK #-} !RawModel
-  , gameTerrainProgram :: {-# UNPACK #-} !Terrain.TerrainProgram
+  , gameTerrainProgram :: {-# UNPACK #-} !Terrain.Program
   , gameTerrain1       :: {-# UNPACK #-} !Terrain.Terrain
   , gameTerrain2       :: {-# UNPACK #-} !Terrain.Terrain
-  , gameSkyboxProgram  :: {-# UNPACK #-} !Skybox.SkyboxProgram
+  , gameSkyboxProgram  :: {-# UNPACK #-} !Skybox.Program
   , gameSkybox         :: {-# UNPACK #-} !Skybox.Skybox
-  , gameWaterProgram   :: {-# UNPACK #-} !Water.WaterProgram
+  , gameWaterProgram   :: {-# UNPACK #-} !Water.Program
   , gameWater          :: {-# UNPACK #-} !Water.Water
   , gameWaterBuffers   :: {-# UNPACK #-} !FrameBuffers.FrameBuffers
   , gameLastTime       :: {-# UNPACK #-} !Clock.UTCTime

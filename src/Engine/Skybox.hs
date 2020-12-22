@@ -1,8 +1,8 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RecordWildCards #-}
 module Engine.Skybox
-  ( Skybox
-  , SkyboxProgram
+  ( Program
+  , Skybox
   , load
   , mkProgram
   , setUniforms
@@ -174,14 +174,14 @@ generateSkyboxModel = V.unsafeWith vertexBuffer $ \vPtr -> do
   vSize = fromIntegral $ sizeOf (undefined :: GLfloat) * V.length vertexBuffer
   stride = fromIntegral $ sizeOf (undefined :: GLfloat) * 3
 
-data SkyboxProgram = SkyboxProgram
+data Program = Program
   { sProgram     :: {-# UNPACK #-} !GLuint
   , sViewLoc     :: {-# UNPACK #-} !GLint
   , sProjLoc     :: {-# UNPACK #-} !GLint
   , sSkyColorLoc :: {-# UNPACK #-} !GLint
   }
 
-mkProgram :: IO SkyboxProgram
+mkProgram :: IO Program
 mkProgram =
   bracket loadVertexShader glDeleteShader $ \vertexShader ->
   bracket loadFragmentShader glDeleteShader $ \fragmentShader -> do
@@ -192,13 +192,13 @@ mkProgram =
       glGetUniformLocation sProgram name
     sSkyColorLoc <- withCString "skyColor" $ \name ->
       glGetUniformLocation sProgram name
-    return SkyboxProgram{..}
+    return Program{..}
  where
   loadVertexShader = loadShader GL_VERTEX_SHADER vertexShaderSrc
   loadFragmentShader = loadShader GL_FRAGMENT_SHADER fragmentShaderSrc
 
 setUniforms
-  :: SkyboxProgram
+  :: Program
   -> Linear.M44 GLfloat
   -> Linear.M44 GLfloat
   -> Linear.V3 GLfloat
@@ -210,7 +210,7 @@ setUniforms p view proj (Linear.V3 r g b) = do
     glUniformMatrix4fv (sProjLoc p) 1 GL_TRUE (castPtr matrixPtr)
   glUniform3f (sSkyColorLoc p) r g b
 
-use :: SkyboxProgram -> IO ()
+use :: Program -> IO ()
 use p = glUseProgram $ sProgram p
 
 draw :: Skybox -> IO ()

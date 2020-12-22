@@ -1,8 +1,8 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RecordWildCards #-}
 module Engine.Terrain.Terrain
-  ( Terrain
-  , TerrainProgram
+  ( Program
+  , Terrain
   , load
   , mkProgram
   , heightAt
@@ -302,7 +302,7 @@ barycentric (Linear.V3 p1x p1y p1z)
   l2 = ((p3z - p1z) * (posx - p3x) + (p1x - p3x) * (posy - p3z)) / det
   l3 = 1.0 - l1 - l2
 
-data TerrainProgram = TerrainProgram
+data Program = Program
   { tProgram             :: {-# UNPACK #-} !GLuint
   , tBackTextureLoc      :: {-# UNPACK #-} !GLint
   , tRTextureLoc         :: {-# UNPACK #-} !GLint
@@ -321,7 +321,7 @@ data TerrainProgram = TerrainProgram
   , tClipPlaneLoc        :: {-# UNPACK #-} !GLint
   }
 
-mkProgram :: Int -> IO TerrainProgram
+mkProgram :: Int -> IO Program
 mkProgram maxLights = do
   tProgram <-
     bracket loadVertexShader glDeleteShader $ \vertexShader ->
@@ -362,7 +362,7 @@ mkProgram maxLights = do
     glGetUniformLocation tProgram name
   tClipPlaneLoc <- withCString "clipPlane" $ \name ->
     glGetUniformLocation tProgram name
-  return TerrainProgram{..}
+  return Program{..}
  where
   loadVertexShader = loadShader GL_VERTEX_SHADER $ vertexShaderSrc maxLights
   loadFragmentShader =
@@ -370,7 +370,7 @@ mkProgram maxLights = do
 
 setUniforms
   :: Terrain
-  -> TerrainProgram
+  -> Program
   -> [Light]
   -> Linear.V3 GLfloat
   -> Linear.M44 GLfloat
@@ -417,10 +417,10 @@ setUniforms t p lights skyColor view proj clipPlane = do
   lightsWithLocs =
     zip4 padded (tLightPosLoc p) (tLightColorLoc p) (tLightAttenuationLoc p)
 
-use :: TerrainProgram -> IO ()
+use :: Program -> IO ()
 use p = glUseProgram $ tProgram p
 
-draw :: Terrain -> TerrainProgram -> IO ()
+draw :: Terrain -> Program -> IO ()
 draw t p = do
   with model $ \matrixPtr ->
     glUniformMatrix4fv (tModelLoc p) 1 GL_TRUE (castPtr matrixPtr)

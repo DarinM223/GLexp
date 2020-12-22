@@ -1,7 +1,7 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RecordWildCards #-}
 module Engine.Water.Water
-  ( WaterProgram
+  ( Program
   , Water (dudvMap, normalMap)
   , mkProgram
   , mkWater
@@ -147,7 +147,7 @@ fragmentShaderSrc maxLights = BS.pack (shaderHeader maxLights) <> BS.pack
     }
   |]
 
-data WaterProgram = WaterProgram
+data Program = Program
   { wProgram              :: {-# UNPACK #-} !GLuint
   , wModelLoc             :: {-# UNPACK #-} !GLint
   , wViewLoc              :: {-# UNPACK #-} !GLint
@@ -164,7 +164,7 @@ data WaterProgram = WaterProgram
   , wMoveFactorLoc        :: {-# UNPACK #-} !GLint
   }
 
-mkProgram :: Int -> IO WaterProgram
+mkProgram :: Int -> IO Program
 mkProgram maxLights = do
   wProgram <-
     bracket loadVertexShader glDeleteShader $ \vertexShader ->
@@ -192,16 +192,16 @@ mkProgram maxLights = do
     withCString ("attenuation[" ++ show i ++ "]") $
       glGetUniformLocation wProgram
   wMoveFactorLoc <- withCString "moveFactor" $ glGetUniformLocation wProgram
-  return WaterProgram{..}
+  return Program{..}
  where
   loadVertexShader = loadShader GL_VERTEX_SHADER (vertexShaderSrc maxLights)
   loadFragmentShader =
     loadShader GL_FRAGMENT_SHADER (fragmentShaderSrc maxLights)
 
-use :: WaterProgram -> IO ()
+use :: Program -> IO ()
 use = glUseProgram . wProgram
 
-setUniforms :: WaterProgram
+setUniforms :: Program
             -> Linear.M44 GLfloat
             -> Linear.M44 GLfloat
             -> Linear.V3 GLfloat
@@ -216,7 +216,7 @@ setUniforms p view proj cameraPosition moveFactor = do
   glUniform1f (wMoveFactorLoc p) moveFactor
  where Linear.V3 posx posy posz = cameraPosition
 
-setLights :: WaterProgram -> [Light] -> IO ()
+setLights :: Program -> [Light] -> IO ()
 setLights p lights = forM_ lightsWithLocs $ \(l, posLoc, colLoc, attLoc) -> do
   let Linear.V3 px py pz = lightPos l
       Linear.V3 cx cy cz = lightColor l
@@ -229,7 +229,7 @@ setLights p lights = forM_ lightsWithLocs $ \(l, posLoc, colLoc, attLoc) -> do
   lightsWithLocs = zip4 padded
     (wLightPositionLoc p) (wLightColorLoc p) (wLightAttenuationLoc p)
 
-setTextures :: WaterProgram -> FrameBuffers -> Water -> IO ()
+setTextures :: Program -> FrameBuffers -> Water -> IO ()
 setTextures p bufs w = do
   glActiveTexture GL_TEXTURE0
   glBindTexture GL_TEXTURE_2D $ reflectionTexture bufs
@@ -283,7 +283,7 @@ update w secs = do
   modifyIORef' (waterMoveFactor w) ((`mod'` 1) . (+ (waveSpeed * secs)))
   readIORef $ waterMoveFactor w
 
-drawTile :: Water -> WaterTile -> WaterProgram -> IO ()
+drawTile :: Water -> WaterTile -> Program -> IO ()
 drawTile w tile p = do
   with matrix $ \matrixPtr ->
     glUniformMatrix4fv (wModelLoc p) 1 GL_TRUE (castPtr matrixPtr)
