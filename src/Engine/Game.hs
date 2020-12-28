@@ -46,7 +46,7 @@ data Game = Game
   , gameProgram        :: {-# UNPACK #-} !TexModel.Program
   , gameCamera         :: {-# UNPACK #-} !Camera
   , gameProj           :: {-# UNPACK #-} !(Linear.M44 GLfloat)
-  , gameLights         :: ![Light]
+  , gameLights         :: {-# UNPACK #-} !(V.Vector Light)
   , gameProjectiles    :: {-# UNPACK #-} !(FixedArray.Array IO Projectile)
   , gameTexture        :: {-# UNPACK #-} !Texture
   , gameRawModel       :: {-# UNPACK #-} !RawModel
@@ -167,7 +167,7 @@ init w h = do
     <*> TexModel.mkProgram maxLights
     <*> pure camera
     <*> pure proj
-    <*> pure [light1, light2, light3, light4]
+    <*> pure (V.fromList [light1, light2, light3, light4])
     <*> FixedArray.new 100
     <*> pure texture
     <*> pure model

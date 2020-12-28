@@ -15,11 +15,10 @@ module Engine.Water.Water
   ) where
 
 import Control.Exception (bracket)
-import Control.Monad (forM, forM_)
+import Control.Monad (forM_)
 import Data.ByteString (ByteString)
 import Data.Fixed (mod')
 import Data.IORef
-import Data.List (zip4)
 import Engine.Types
 import Engine.Utils
   (linkShaders, loadShader, loadTexture, loadVAO, shaderHeader)
@@ -152,15 +151,15 @@ data Program = Program
   , modelLoc             :: {-# UNPACK #-} !GLint
   , viewLoc              :: {-# UNPACK #-} !GLint
   , projLoc              :: {-# UNPACK #-} !GLint
-  , lightPositionLoc     :: ![GLint]
+  , lightPositionLoc     :: {-# UNPACK #-} !(V.Vector GLint)
   , cameraPositionLoc    :: {-# UNPACK #-} !GLint
   , reflectionTextureLoc :: {-# UNPACK #-} !GLint
   , refractionTextureLoc :: {-# UNPACK #-} !GLint
   , dudvMapLoc           :: {-# UNPACK #-} !GLint
   , normalMapLoc         :: {-# UNPACK #-} !GLint
   , depthMapLoc          :: {-# UNPACK #-} !GLint
-  , lightColorLoc        :: ![GLint]
-  , lightAttenuationLoc  :: ![GLint]
+  , lightColorLoc        :: {-# UNPACK #-} !(V.Vector GLint)
+  , lightAttenuationLoc  :: {-# UNPACK #-} !(V.Vector GLint)
   , moveFactorLoc        :: {-# UNPACK #-} !GLint
   }
 
@@ -173,7 +172,7 @@ mkProgram maxLights = do
   modelLoc <- withCString "model" $ glGetUniformLocation program
   viewLoc <- withCString "view" $ glGetUniformLocation program
   projLoc <- withCString "projection" $ glGetUniformLocation program
-  lightPositionLoc <- forM [0..maxLights - 1] $ \i ->
+  lightPositionLoc <- V.forM lightIdxs $ \i ->
     withCString ("lightPosition[" ++ show i ++ "]") $
       glGetUniformLocation program
   cameraPositionLoc <- withCString "cameraPosition" $
@@ -185,15 +184,16 @@ mkProgram maxLights = do
   dudvMapLoc <- withCString "dudvMap" $ glGetUniformLocation program
   normalMapLoc <- withCString "normalMap" $ glGetUniformLocation program
   depthMapLoc <- withCString "depthMap" $ glGetUniformLocation program
-  lightColorLoc <- forM [0..maxLights - 1] $ \i ->
+  lightColorLoc <- V.forM lightIdxs $ \i ->
     withCString ("lightColor[" ++ show i ++ "]") $
       glGetUniformLocation program
-  lightAttenuationLoc <- forM [0..maxLights - 1] $ \i ->
+  lightAttenuationLoc <- V.forM lightIdxs $ \i ->
     withCString ("attenuation[" ++ show i ++ "]") $
       glGetUniformLocation program
   moveFactorLoc <- withCString "moveFactor" $ glGetUniformLocation program
   return Program{..}
  where
+  lightIdxs = V.enumFromN 0 maxLights :: V.Vector Int
   loadVertexShader = loadShader GL_VERTEX_SHADER (vertexShaderSrc maxLights)
   loadFragmentShader =
     loadShader GL_FRAGMENT_SHADER (fragmentShaderSrc maxLights)
@@ -214,18 +214,12 @@ setUniforms p view proj cameraPosition moveFactor = do
   glUniform1f (moveFactorLoc p) moveFactor
  where Linear.V3 posx posy posz = cameraPosition
 
-setLights :: Program -> [Light] -> IO ()
-setLights p lights = forM_ lightsWithLocs $ \(l, posLoc, colLoc, attLoc) -> do
-  let Linear.V3 px py pz = lightPos l
-      Linear.V3 cx cy cz = lightColor l
-      Linear.V3 ax ay az = lightAttenuation l
-  glUniform3f posLoc px py pz
-  glUniform3f colLoc cx cy cz
-  glUniform3f attLoc ax ay az
- where
-  padded = padLights lights (lightPositionLoc p) (lightColorLoc p)
-  lightsWithLocs = zip4 padded
-    (lightPositionLoc p) (lightColorLoc p) (lightAttenuationLoc p)
+setLights :: Program -> V.Vector Light -> IO ()
+setLights p lights = forM_ [0..V.length lights - 1] $ \i -> setLightUniforms
+  (lights V.! i)
+  (lightPositionLoc p V.! i)
+  (lightColorLoc p V.! i)
+  (lightAttenuationLoc p V.! i)
 
 setTextures :: Program -> FrameBuffers -> Water -> IO ()
 setTextures p bufs w = do

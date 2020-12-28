@@ -13,11 +13,10 @@ module Engine.Terrain.Terrain
 
 import Codec.Picture
 import Control.Exception (bracket)
-import Control.Monad (forM, forM_)
+import Control.Monad (forM_)
 import Data.Bits (shiftL, (.|.))
 import Data.ByteString (ByteString)
 import Data.Fixed (mod')
-import Data.List (zip4)
 import Engine.Types
 import Engine.Utils (linkShaders, loadShader, shaderHeader)
 import Foreign.C.String (withCString)
@@ -312,9 +311,9 @@ data Program = Program
   , modelLoc            :: {-# UNPACK #-} !GLint
   , viewLoc             :: {-# UNPACK #-} !GLint
   , projLoc             :: {-# UNPACK #-} !GLint
-  , lightPosLoc         :: ![GLint]
-  , lightColorLoc       :: ![GLint]
-  , lightAttenuationLoc :: ![GLint]
+  , lightPosLoc         :: {-# UNPACK #-} !(V.Vector GLint)
+  , lightColorLoc       :: {-# UNPACK #-} !(V.Vector GLint)
+  , lightAttenuationLoc :: {-# UNPACK #-} !(V.Vector GLint)
   , shineDamperLoc      :: {-# UNPACK #-} !GLint
   , reflectivityLoc     :: {-# UNPACK #-} !GLint
   , skyColorLoc         :: {-# UNPACK #-} !GLint
@@ -338,13 +337,13 @@ mkProgram maxLights = do
   modelLoc <- withCString "model" $ glGetUniformLocation program
   viewLoc <- withCString "view" $ glGetUniformLocation program
   projLoc <- withCString "projection" $ glGetUniformLocation program
-  lightPosLoc <- forM [0..maxLights - 1] $ \i ->
+  lightPosLoc <- V.forM lightIdxs $ \i ->
     withCString ("lightPosition[" ++ show i ++ "]") $
       glGetUniformLocation program
-  lightColorLoc <- forM [0..maxLights - 1] $ \i ->
+  lightColorLoc <- V.forM lightIdxs $ \i ->
     withCString ("lightColor[" ++ show i ++ "]") $
       glGetUniformLocation program
-  lightAttenuationLoc <- forM [0..maxLights - 1] $ \i ->
+  lightAttenuationLoc <- V.forM lightIdxs $ \i ->
     withCString ("attenuation[" ++ show i ++ "]") $
       glGetUniformLocation program
   shineDamperLoc <- withCString "shineDamper" $ glGetUniformLocation program
@@ -353,6 +352,7 @@ mkProgram maxLights = do
   clipPlaneLoc <- withCString "clipPlane" $ glGetUniformLocation program
   return Program{..}
  where
+  lightIdxs = V.enumFromN 0 maxLights :: V.Vector Int
   loadVertexShader = loadShader GL_VERTEX_SHADER $ vertexShaderSrc maxLights
   loadFragmentShader =
     loadShader GL_FRAGMENT_SHADER $ fragmentShaderSrc maxLights
@@ -360,7 +360,7 @@ mkProgram maxLights = do
 setUniforms
   :: Terrain
   -> Program
-  -> [Light]
+  -> V.Vector Light
   -> Linear.V3 GLfloat
   -> Linear.M44 GLfloat
   -> Linear.M44 GLfloat
@@ -392,17 +392,17 @@ setUniforms t p lights skyColor view proj clipPlane = do
 
   with view $ glUniformMatrix4fv (viewLoc p) 1 GL_TRUE . castPtr
   with proj $ glUniformMatrix4fv (projLoc p) 1 GL_TRUE . castPtr
-  forM_ lightsWithLocs $ \(l, posLoc, colLoc, attLoc) ->
-    setLightUniforms l posLoc colLoc attLoc
+  forM_ [0..V.length lights - 1] $ \i -> setLightUniforms
+    (lights V.! i)
+    (lightPosLoc p V.! i)
+    (lightColorLoc p V.! i)
+    (lightAttenuationLoc p V.! i)
   glUniform3f (skyColorLoc p) r g b
   glUniform4f (clipPlaneLoc p) px py pz pw
  where
   TexturePack{..} = terrainPack t
   Linear.V3 r g b = skyColor
   Linear.V4 px py pz pw = clipPlane
-  padded = padLights lights (lightPosLoc p) (lightColorLoc p)
-  lightsWithLocs =
-    zip4 padded (lightPosLoc p) (lightColorLoc p) (lightAttenuationLoc p)
 
 use :: Program -> IO ()
 use p = glUseProgram $ program p

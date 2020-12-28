@@ -77,13 +77,13 @@ data Light = Light
   , lightColor       :: {-# UNPACK #-} !(Linear.V3 GLfloat)
   , lightAttenuation :: {-# UNPACK #-} !(Linear.V3 GLfloat)
   } deriving Show
+$(deriveStorable ''Light)
 
-padLights :: [Light] -> [GLint] -> [GLint] -> [Light]
-padLights (l:ls) (_:as) (_:bs) = l:padLights ls as bs
-padLights [] (_:as) (_:bs)     = l:padLights [] as bs
+padLights :: [Light] -> Int -> [Light]
+padLights (l:ls) lights | lights > 0 = l:padLights ls (lights - 1)
+padLights [] lights | lights > 0     = l:padLights [] (lights - 1)
  where l = Light (Linear.V3 0 0 0) (Linear.V3 0 0 0) (Linear.V3 1 0 0)
-padLights _ [] _ = []
-padLights _ _ [] = []
+padLights _ _  = []
 
 setLightUniforms :: Light -> GLint -> GLint -> GLint -> IO ()
 setLightUniforms light posLoc colorLoc attLoc = do
