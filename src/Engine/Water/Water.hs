@@ -2,7 +2,7 @@
 {-# LANGUAGE RecordWildCards #-}
 module Engine.Water.Water
   ( Program
-  , Water (dudvMap, normalMap)
+  , Water (dudvMap, moveFactor, normalMap)
   , mkProgram
   , mkWater
   , use
@@ -18,7 +18,6 @@ import Control.Exception (bracket)
 import Control.Monad (forM_)
 import Data.ByteString (ByteString)
 import Data.Fixed (mod')
-import Data.IORef
 import Engine.Types
 import Engine.Utils
   (linkShaders, loadShader, loadTexture, loadVAO, shaderHeader)
@@ -257,10 +256,10 @@ waterVertices :: V.Vector GLfloat
 waterVertices = V.fromList [-1, -1, -1, 1, 1, -1, 1, -1, -1, 1, 1, 1]
 
 data Water = Water
-  { waterRawModel   :: {-# UNPACK #-} !RawModel
-  , dudvMap         :: {-# UNPACK #-} !Texture
-  , normalMap       :: {-# UNPACK #-} !Texture
-  , waterMoveFactor :: {-# UNPACK #-} !(IORef GLfloat)
+  { waterRawModel :: {-# UNPACK #-} !RawModel
+  , dudvMap       :: {-# UNPACK #-} !Texture
+  , normalMap     :: {-# UNPACK #-} !Texture
+  , moveFactor    :: {-# UNPACK #-} !GLfloat
   }
 
 mkWater :: IO Water
@@ -268,12 +267,12 @@ mkWater = Water
   <$> loadVAO waterVertices 2
   <*> loadTexture "res/waterDUDV.png"
   <*> loadTexture "res/normalMap.png"
-  <*> newIORef 0
+  <*> pure 0
 
-update :: Water -> GLfloat -> IO GLfloat
-update w secs = do
-  modifyIORef' (waterMoveFactor w) ((`mod'` 1) . (+ (waveSpeed * secs)))
-  readIORef $ waterMoveFactor w
+update :: GLfloat -> Water -> Water
+update elapsed w = w
+  { moveFactor = (moveFactor w + waveSpeed * elapsed) `mod'` 1
+  }
 
 drawTile :: Water -> WaterTile -> Program -> IO ()
 drawTile w tile p = do

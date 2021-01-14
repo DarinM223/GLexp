@@ -59,7 +59,6 @@ data Game = Game
   , gameWater          :: {-# UNPACK #-} !Water.Water
   , gameWaterBuffers   :: {-# UNPACK #-} !FrameBuffers.FrameBuffers
   , gameLastTime       :: {-# UNPACK #-} !Clock.UTCTime
-  , gameElapsedTime    :: {-# UNPACK #-} !GLfloat
   , gameSkyColor       :: {-# UNPACK #-} !(Linear.V3 GLfloat)
   }
 
@@ -187,7 +186,6 @@ init w h = do
     <*> Water.mkWater
     <*> FrameBuffers.init (fromIntegral w) (fromIntegral h)
     <*> Clock.getCurrentTime
-    <*> pure 0
     <*> pure (Linear.V3 0.5 0.5 0.5)
  where
   camera = Camera (Linear.V3 10 2 30) (Linear.V3 0 0 (-1)) (Linear.V3 0 1 0) 0 0
@@ -248,9 +246,11 @@ updateProjectiles g
 updateTime :: Game -> IO Game
 updateTime g = do
   currentTime <- Clock.getCurrentTime
-  let diffTime = realToFrac . Clock.nominalDiffTimeToSeconds
-               $ Clock.diffUTCTime currentTime (gameLastTime g)
-  return g { gameElapsedTime = diffTime, gameLastTime = currentTime }
+  let elapsed = realToFrac . Clock.nominalDiffTimeToSeconds
+              $ Clock.diffUTCTime currentTime (gameLastTime g)
+  return g { gameLastTime = currentTime
+           , gameWater    = Water.update elapsed (gameWater g)
+           }
 
 handleLeftClick :: MouseInfo -> Game -> IO Game
 handleLeftClick info g = case mouseLeftCoords info of
@@ -296,8 +296,12 @@ draw g = do
   drawScene g view (Linear.V4 0 0 0 0)
 
   Water.use $ gameWaterProgram g
-  Water.update (gameWater g) (gameElapsedTime g) >>= Water.setUniforms
-    (gameWaterProgram g) view (gameProj g) (cameraPos (gameCamera g))
+  Water.setUniforms
+    (gameWaterProgram g)
+    view
+    (gameProj g)
+    (cameraPos (gameCamera g))
+    (Water.moveFactor (gameWater g))
   Water.setLights (gameWaterProgram g) (gameLights g)
   Water.setTextures (gameWaterProgram g) (gameWaterBuffers g) (gameWater g)
   forM_ [0..VM.length (gameWaterTiles g) - 1] $ \i -> do
