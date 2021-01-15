@@ -1,12 +1,12 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE UnboxedTuples #-}
 module Engine (start) where
 
 import Control.Exception (Exception, bracket, throwIO)
-import Control.Monad (unless, void, when)
-import Data.Foldable (traverse_)
+import Control.Monad (void, when)
 import Data.IORef (IORef, modifyIORef, newIORef, readIORef)
-import Data.Maybe (isJust)
-import Engine.Types (MouseInfo (..), updateMouseInfo)
+import Engine.Types
+  (Coords (..), MouseInfo (..), mkCoords, noCoord, updateMouseInfo)
 import Graphics.GL.Core45
 import qualified Data.Set as S
 import qualified Engine.Game as Game
@@ -33,26 +33,28 @@ onKeyPressed ref _ key _ keyState _ = case keyState of
 onCursorMoved :: IORef MouseInfo -> GLFW.CursorPosCallback
 onCursorMoved mouseInfoRef _ x y = do
   pressed <- mouseRightPressed <$> readIORef mouseInfoRef
-  unless pressed $ modifyIORef mouseInfoRef $ updateMouseInfo x y
+  when (pressed == 0) $ modifyIORef mouseInfoRef $ updateMouseInfo x y
 
 onMousePressed :: IORef MouseInfo -> GLFW.MouseButtonCallback
 onMousePressed mouseInfoRef win GLFW.MouseButton'2 state _ = do
   modifyIORef mouseInfoRef $ \info -> info { mouseRightPressed = pressed }
-  if pressed
+  if pressed /= 0
     then GLFW.setCursorInputMode win GLFW.CursorInputMode'Normal
     else do
       GLFW.setCursorInputMode win GLFW.CursorInputMode'Disabled
       lastPos <- mouseLastPos <$> readIORef mouseInfoRef
-      traverse_ (uncurry (GLFW.setCursorPos win)) lastPos
+      case lastPos of
+        Coords (# (# x, y #) | #) -> GLFW.setCursorPos win x y
+        _                         -> return ()
  where
   pressed = case state of
-    GLFW.MouseButtonState'Pressed  -> True
-    GLFW.MouseButtonState'Released -> False
+    GLFW.MouseButtonState'Pressed  -> 1
+    GLFW.MouseButtonState'Released -> 0
 onMousePressed ref win GLFW.MouseButton'1 GLFW.MouseButtonState'Pressed _ = do
   rightButtonClicked <- mouseRightPressed <$> readIORef ref
-  when rightButtonClicked $ do
-    coords <- GLFW.getCursorPos win
-    modifyIORef ref $ \info -> info { mouseLeftCoords = Just coords }
+  when (rightButtonClicked /= 0) $ do
+    (x, y) <- GLFW.getCursorPos win
+    modifyIORef ref $ \info -> info { mouseLeftCoords = mkCoords x y }
 onMousePressed _ _ _ _ _ = return ()
 
 mkWindow :: WindowParams -> IO GLFW.Window
@@ -92,8 +94,10 @@ gameLoop keysRef mouseInfoRef window = do
         game' <- Game.update keys mouseInfo dt game
 
         -- Handle left button event only once.
-        when (isJust $ mouseLeftCoords mouseInfo) $
-          modifyIORef mouseInfoRef $ \info -> info { mouseLeftCoords = Nothing }
+        case mouseLeftCoords mouseInfo of
+          Coords (# _ | #) -> modifyIORef mouseInfoRef $
+            \info -> info { mouseLeftCoords = noCoord }
+          _ -> return ()
 
         Game.draw game'
 
@@ -105,7 +109,7 @@ start :: IO ()
 start = do
   keysRef <- newIORef S.empty
   mouseInfoRef <- newIORef $
-    MouseInfo Nothing (0, -90) (Linear.V3 0 0 (-1)) False Nothing
+    MouseInfo noCoord (0, -90) (Linear.V3 0 0 (-1)) 0 noCoord
   let
     createWindow = mkWindow $ WindowParams
       (onKeyPressed keysRef)

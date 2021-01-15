@@ -270,9 +270,8 @@ mkWater = Water
   <*> pure 0
 
 update :: GLfloat -> Water -> Water
-update elapsed w = w
-  { moveFactor = (moveFactor w + waveSpeed * elapsed) `mod'` 1
-  }
+update elapsed w =
+  w { moveFactor = (moveFactor w + waveSpeed * elapsed) `mod'` 1 }
 
 drawTile :: Water -> WaterTile -> Program -> IO ()
 drawTile w tile p = do

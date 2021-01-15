@@ -1,5 +1,7 @@
 packages: .
 
+optimization: 2
+
 source-repository-package
   type: git
   location: https://github.com/DarinM223/derive-storable-th

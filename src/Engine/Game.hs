@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE UnboxedTuples #-}
 module Engine.Game
   ( init
   , update
@@ -200,9 +201,11 @@ init w h = do
     Light (Linear.V3 100 17 20) (Linear.V3 2 2 0) (Linear.V3 1 0.01 0.002)
 
 update :: S.Set GLFW.Key -> MouseInfo -> GLfloat -> Game -> IO Game
-update keys mouseInfo dt g0 =
+update keys mouseInfo dt g0 = do
+  currentTime <- Clock.getCurrentTime
+  let (# g0', elapsed #) = updateTime currentTime g0 { gameCamera = camera''' }
   foldlM update' g0' [0..VM.length (gameEntities g0') - 1] >>=
-    (handleLeftClick mouseInfo >=> updateProjectiles >=> updateTime)
+    (handleLeftClick mouseInfo >=> updateProjectiles elapsed)
  where
   (pitch, yaw) = mouseOldPitchYaw mouseInfo
   camera' = (gameCamera g0)
@@ -217,8 +220,6 @@ update keys mouseInfo dt g0 =
   terrainHeight = Terrain.heightAt cx cz (gameTerrain1 g0) + 1
   camera''' = camera'' { cameraPos = Linear.V3 cx terrainHeight cz }
 
-  g0' = g0 { gameCamera = camera''' }
-
   update' :: Game -> Int -> IO Game
   update' !g i = do
     let
@@ -228,8 +229,8 @@ update keys mouseInfo dt g0 =
     VM.modify (gameEntities g) updateEntity i
     return g
 
-updateProjectiles :: Game -> IO Game
-updateProjectiles g
+updateProjectiles :: GLfloat -> Game -> IO Game
+updateProjectiles elapsed g
   =   (\ps' -> g { gameProjectiles = ps' })
   <$> FixedArray.foldlM updateProjectile ps ps
  where
@@ -238,26 +239,26 @@ updateProjectiles g
     let e  = projectileEntity p
         e' = e { entityPos = entityPos e + projectileRay p }
     FixedArray.write ps' i p
-      { projectileEntity = e', projectileLife = projectileLife p - 1 }
-    if projectileLife p - 1 < 0
+      { projectileEntity = e', projectileLife = projectileLife p - elapsed }
+    if projectileLife p - elapsed < 0
       then FixedArray.delete ps' i
       else pure ps'
 
-updateTime :: Game -> IO Game
-updateTime g = do
-  currentTime <- Clock.getCurrentTime
-  let elapsed = realToFrac . Clock.nominalDiffTimeToSeconds
-              $ Clock.diffUTCTime currentTime (gameLastTime g)
-  return g { gameLastTime = currentTime
-           , gameWater    = Water.update elapsed (gameWater g)
-           }
+updateTime :: Clock.UTCTime -> Game -> (# Game, GLfloat #)
+updateTime currentTime g = (# g', elapsed #)
+ where
+  elapsed = realToFrac . Clock.nominalDiffTimeToSeconds
+          $ Clock.diffUTCTime currentTime (gameLastTime g)
+  g' = g { gameLastTime = currentTime
+         , gameWater    = Water.update elapsed (gameWater g)
+         }
 
 handleLeftClick :: MouseInfo -> Game -> IO Game
 handleLeftClick info g = case mouseLeftCoords info of
-  Just (x, y) ->
+  Coords (# (# x, y #) | #) ->
     let
       ray    = calculateMouseRay (realToFrac x) (realToFrac y) w h proj view
-      bullet = Projectile 100 ray $ Entity
+      bullet = Projectile 1 ray $ Entity
         (cameraPos $ gameCamera g)
         (Linear.axisAngle (Linear.V3 (0.0 :: GLfloat) 0.0 1.0) 0)
         0.1
