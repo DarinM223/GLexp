@@ -1,12 +1,11 @@
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE UnboxedTuples #-}
 module Engine (start) where
 
 import Control.Exception (Exception, bracket, throwIO)
 import Control.Monad (void, when)
 import Data.IORef (IORef, modifyIORef, newIORef, readIORef)
-import Engine.Types
-  (Coords (..), MouseInfo (..), mkCoords, noCoord, updateMouseInfo)
+import Engine.Types (MouseInfo (..), updateMouseInfo)
+import Engine.Unboxed
 import Graphics.GL.Core45
 import qualified Data.Set as S
 import qualified Engine.Game as Game
@@ -44,8 +43,8 @@ onMousePressed mouseInfoRef win GLFW.MouseButton'2 state _ = do
       GLFW.setCursorInputMode win GLFW.CursorInputMode'Disabled
       lastPos <- mouseLastPos <$> readIORef mouseInfoRef
       case lastPos of
-        Coords (# (# x, y #) | #) -> GLFW.setCursorPos win x y
-        _                         -> return ()
+        Coords x y -> GLFW.setCursorPos win x y
+        _          -> return ()
  where
   pressed = case state of
     GLFW.MouseButtonState'Pressed  -> 1
@@ -95,7 +94,7 @@ gameLoop keysRef mouseInfoRef window = do
 
         -- Handle left button event only once.
         case mouseLeftCoords mouseInfo of
-          Coords (# _ | #) -> modifyIORef mouseInfoRef $
+          Coords _ _ -> modifyIORef mouseInfoRef $
             \info -> info { mouseLeftCoords = noCoord }
           _ -> return ()
 

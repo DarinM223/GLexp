@@ -36,6 +36,7 @@ library
                      , Engine.Terrain.Terrain
                      , Engine.TexturedModel
                      , Engine.Types
+                     , Engine.Unboxed
                      , Engine.Utils
                      , Engine.Water.FrameBuffers
                      , Engine.Water.Water

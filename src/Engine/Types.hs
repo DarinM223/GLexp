@@ -1,10 +1,10 @@
 {-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE UnboxedTuples #-}
 module Engine.Types where
 
 import Control.Exception (Exception)
 import Data.Fixed (mod')
 import Data.Word (Word8)
+import Engine.Unboxed
 import Foreign.Storable.TH (deriveStorable)
 import Graphics.GL.Core45
 import Graphics.GL.Types
@@ -13,22 +13,12 @@ import qualified Data.Set as S
 import qualified Graphics.UI.GLFW as GLFW
 import qualified Linear
 
-data Coords = Coords (# (# Double, Double #) | (# #) #)
-
-noCoord :: Coords
-noCoord = Coords (# | (# #) #)
-{-# INLINE noCoord #-}
-
-mkCoords :: Double -> Double -> Coords
-mkCoords a b = Coords (# (# a, b #) | #)
-{-# INLINE mkCoords #-}
-
 data MouseInfo = MouseInfo
-  { mouseLastPos      :: {-# UNPACK #-} !Coords
+  { mouseLastPos      :: {-# UNPACK #-} !CoordsMaybe
   , mouseOldPitchYaw  :: {-# UNPACK #-} !(Double, Double)
   , mouseFront        :: {-# UNPACK #-} !(Linear.V3 GLfloat)
   , mouseRightPressed :: {-# UNPACK #-} !Word8
-  , mouseLeftCoords   :: {-# UNPACK #-} !Coords
+  , mouseLeftCoords   :: {-# UNPACK #-} !CoordsMaybe
   }
 
 calcFront :: Double -> Double -> Linear.V3 GLfloat
@@ -36,7 +26,7 @@ calcFront pitch yaw = Linear.normalize $ Linear.V3
   (cos yawR * cos pitchR) (sin pitchR) (sin yawR * cos pitchR)
  where
   toRadians = realToFrac . (* (pi / 180))
-  (# yawR, pitchR #) = (# toRadians yaw, toRadians pitch #)
+  (yawR, pitchR) = (toRadians yaw, toRadians pitch)
 
 updateMouseInfo :: Double -> Double -> MouseInfo -> MouseInfo
 updateMouseInfo x y info = info
@@ -45,9 +35,9 @@ updateMouseInfo x y info = info
   , mouseFront       = calcFront pitch yaw
   }
  where
-  (# lastX, lastY #) = case mouseLastPos info of
-    Coords (# (# x', y' #) | #) -> (# x', y' #)
-    _                           -> (# x, y #)
+  (lastX, lastY) = case mouseLastPos info of
+    Coords x' y' -> (x', y')
+    _            -> (x, y)
   sensitivity = 0.10
   dx = (x - lastX) * sensitivity
   dy = (lastY - y) * sensitivity

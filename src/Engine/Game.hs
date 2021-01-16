@@ -1,5 +1,4 @@
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE UnboxedTuples #-}
 module Engine.Game
   ( init
   , update
@@ -14,6 +13,7 @@ import Data.Bits ((.|.))
 import Data.Foldable (foldlM)
 import Engine.MousePicker (calculateMouseRay)
 import Engine.Types
+import Engine.Unboxed
 import Engine.Utils
 import Graphics.GL.Core45
 import Graphics.GL.Types
@@ -203,7 +203,7 @@ init w h = do
 update :: S.Set GLFW.Key -> MouseInfo -> GLfloat -> Game -> IO Game
 update keys mouseInfo dt g0 = do
   currentTime <- Clock.getCurrentTime
-  let (# g0', elapsed #) = updateTime currentTime g0 { gameCamera = camera''' }
+  let (g0', elapsed) = updateTime currentTime g0 { gameCamera = camera''' }
   foldlM update' g0' [0..VM.length (gameEntities g0') - 1] >>=
     (handleLeftClick mouseInfo >=> updateProjectiles elapsed)
  where
@@ -244,8 +244,8 @@ updateProjectiles elapsed g
       then FixedArray.delete ps' i
       else pure ps'
 
-updateTime :: Clock.UTCTime -> Game -> (# Game, GLfloat #)
-updateTime currentTime g = (# g', elapsed #)
+updateTime :: Clock.UTCTime -> Game -> (Game, GLfloat)
+updateTime currentTime g = (g', elapsed)
  where
   elapsed = realToFrac . Clock.nominalDiffTimeToSeconds
           $ Clock.diffUTCTime currentTime (gameLastTime g)
@@ -255,7 +255,7 @@ updateTime currentTime g = (# g', elapsed #)
 
 handleLeftClick :: MouseInfo -> Game -> IO Game
 handleLeftClick info g = case mouseLeftCoords info of
-  Coords (# (# x, y #) | #) ->
+  Coords x y ->
     let
       ray    = calculateMouseRay (realToFrac x) (realToFrac y) w h proj view
       bullet = Projectile 1 ray $ Entity
