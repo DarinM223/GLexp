@@ -13,10 +13,10 @@ module Engine.Terrain.Terrain
 
 import Codec.Picture
 import Control.Exception (bracket)
-import Control.Monad (forM_)
 import Data.Bits (shiftL, (.|.))
 import Data.ByteString (ByteString)
 import Data.Fixed (mod')
+import Data.Foldable (for_)
 import Engine.Types
 import Engine.Utils (linkShaders, loadShader, shaderHeader)
 import Foreign.C.String (withCString)
@@ -392,7 +392,7 @@ setUniforms t p lights skyColor view proj clipPlane = do
 
   with view $ glUniformMatrix4fv (viewLoc p) 1 GL_TRUE . castPtr
   with proj $ glUniformMatrix4fv (projLoc p) 1 GL_TRUE . castPtr
-  forM_ [0..V.length lights - 1] $ \i -> setLightUniforms
+  for_ [0..V.length lights - 1] $ \i -> setLightUniforms
     (lights V.! i)
     (lightPosLoc p V.! i)
     (lightColorLoc p V.! i)

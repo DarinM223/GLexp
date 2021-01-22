@@ -14,10 +14,11 @@ module Engine.FixedArray
   ) where
 
 import Prelude hiding (init, length, read)
+import Control.Monad (unless)
 import Control.Monad.Primitive (PrimMonad, PrimState)
+import Data.Foldable (for_)
 import Data.Functor (($>))
 import Foreign.Storable (Storable (..))
-import qualified Control.Monad as M
 import qualified Data.Foldable as F
 import qualified Data.Vector.Storable.Mutable as VM
 
@@ -84,9 +85,9 @@ indexes :: Array m a -> [Int]
 indexes arr = [1..arrayEnd arr - 1]
 
 forM_ :: (PrimMonad m, VM.Storable a) => Array m a -> (Int -> a -> m ()) -> m ()
-forM_ arr f = M.forM_ (indexes arr) $ \i -> do
+forM_ arr f = for_ (indexes arr) $ \i -> do
   e <- read arr i
-  M.unless (nextFree e /= 0) $ f i (arrayElem e)
+  unless (nextFree e /= 0) $ f i (arrayElem e)
 
 foldlM :: (PrimMonad m, VM.Storable a)
        => (b -> Int -> a -> m b) -> b -> Array m a -> m b

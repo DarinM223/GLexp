@@ -12,8 +12,8 @@ module Engine.Skybox
 
 import Codec.Picture
 import Control.Exception (bracket)
-import Control.Monad (forM_)
 import Data.ByteString (ByteString)
+import Data.Foldable (for_)
 import Engine.Types (RawModel (..))
 import Engine.Utils (linkShaders, loadShader)
 import Foreign.C.String (withCString)
@@ -124,7 +124,7 @@ loadTexture paths = do
     glGenTextures 1 texturePtr
     peek texturePtr
   glBindTexture GL_TEXTURE_CUBE_MAP texture
-  forM_ (zip [0..] paths) $ \(i, path) -> do
+  for_ (zip [0..] paths) $ \(i, path) -> do
     Right image <- readImage path
     let ipixelrgb8 = convertRGB8 image
         iWidth     = fromIntegral $ imageWidth ipixelrgb8

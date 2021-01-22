@@ -7,10 +7,10 @@ module Engine.Game
 
 import Prelude hiding (init)
 import Control.Lens ((^.), (&), (%~))
-import Control.Monad ((>=>), forM_)
+import Control.Monad ((>=>))
 import Control.Monad.Primitive (PrimState)
 import Data.Bits ((.|.))
-import Data.Foldable (foldlM)
+import Data.Foldable (foldlM, for_)
 import Engine.MousePicker (calculateMouseRay)
 import Engine.Types
 import Engine.Unboxed
@@ -305,7 +305,7 @@ draw g = do
     (Water.moveFactor (gameWater g))
   Water.setLights (gameWaterProgram g) (gameLights g)
   Water.setTextures (gameWaterProgram g) (gameWaterBuffers g) (gameWater g)
-  forM_ [0..VM.length (gameWaterTiles g) - 1] $ \i -> do
+  for_ [0..VM.length (gameWaterTiles g) - 1] $ \i -> do
     tile <- VM.read (gameWaterTiles g) i
     Water.drawTile (gameWater g) tile (gameWaterProgram g)
   Water.unbind
@@ -335,7 +335,7 @@ drawScene g view clipPlane = do
   TexModel.setTexture (gameProgram g) (gameTexture g)
 
   glBindVertexArray $ modelVao $ gameRawModel g
-  forM_ [0..VM.length (gameEntities g) - 1] $ \i -> do
+  for_ [0..VM.length (gameEntities g) - 1] $ \i -> do
     e <- VM.read (gameEntities g) i
 
     let rotM33 = Linear.fromQuaternion (entityRot e) !!* entityScale e
@@ -376,7 +376,7 @@ drawEntities p v = do
   e0 <- VM.read v 0
   TexModel.setTexture p $ entityTex e0
   glBindVertexArray $ modelVao $ entityModel e0
-  forM_ [0..VM.length v - 1] $ \i -> do
+  for_ [0..VM.length v - 1] $ \i -> do
     e <- VM.read v i
     TexModel.setModel p
       (Linear.mkTransformationMat Linear.identity (entityPos e))

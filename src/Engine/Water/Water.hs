@@ -15,9 +15,9 @@ module Engine.Water.Water
   ) where
 
 import Control.Exception (bracket)
-import Control.Monad (forM_)
 import Data.ByteString (ByteString)
 import Data.Fixed (mod')
+import Data.Foldable (for_)
 import Engine.Types
 import Engine.Utils
   (linkShaders, loadShader, loadTexture, loadVAO, shaderHeader)
@@ -214,7 +214,7 @@ setUniforms p view proj cameraPosition moveFactor = do
  where Linear.V3 posx posy posz = cameraPosition
 
 setLights :: Program -> V.Vector Light -> IO ()
-setLights p lights = forM_ [0..V.length lights - 1] $ \i -> setLightUniforms
+setLights p lights = for_ [0..V.length lights - 1] $ \i -> setLightUniforms
   (lights V.! i)
   (lightPositionLoc p V.! i)
   (lightColorLoc p V.! i)
