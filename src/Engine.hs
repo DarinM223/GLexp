@@ -9,6 +9,7 @@ import Engine.Unboxed
 import Graphics.GL.Core45
 import qualified Data.Set as S
 import qualified Engine.Game as Game
+import qualified Engine.Vec as Vec
 import qualified Graphics.UI.GLFW as GLFW
 import qualified Linear
 
@@ -90,7 +91,7 @@ gameLoop keysRef mouseInfoRef window = do
 
         keys <- readIORef keysRef
         mouseInfo <- readIORef mouseInfoRef
-        game' <- Game.update keys mouseInfo dt game
+        game' <- Vec.unsafeRunUpdateM $ Game.update keys mouseInfo dt game
 
         -- Handle left button event only once.
         case mouseLeftCoords mouseInfo of

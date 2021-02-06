@@ -15,12 +15,12 @@ module Engine.FixedArray
 
 import Prelude hiding (init, length, read)
 import Control.Monad (unless)
-import Control.Monad.Primitive (PrimMonad, PrimState)
 import Data.Foldable (for_)
 import Data.Functor (($>))
 import Foreign.Storable (Storable (..))
 import qualified Data.Foldable as F
 import qualified Data.Vector.Storable.Mutable as VM
+import qualified Engine.Vec as V
 
 data FixedArrayElem a = FixedArrayElem
   { arrayElem :: !a
@@ -40,57 +40,57 @@ instance Storable a => Storable (FixedArrayElem a) where
 mkElem :: a -> FixedArrayElem a
 mkElem a = FixedArrayElem a 0
 
-data Array m a = Array
-  { arrayStore :: {-# UNPACK #-} !(VM.MVector (PrimState m) (FixedArrayElem a))
+data Array a = Array
+  { arrayStore :: {-# UNPACK #-} !(V.Vec (FixedArrayElem a))
   , arrayTop   :: {-# UNPACK #-} !Int
   , arrayEnd   :: {-# UNPACK #-} !Int
   }
 
-instance Show (Array m a) where
+instance Show (Array a) where
   show arr = "Array top: " ++ show (arrayTop arr)
           ++ " end: " ++ show (arrayEnd arr)
 
-new :: (PrimMonad m, VM.Storable a) => Int -> m (Array m a)
-new size = Array <$> VM.new (size + 1) <*> pure (-1) <*> pure 1
+new :: VM.Storable a => Int -> IO (Array a)
+new size = Array <$> V.new (size + 1) <*> pure (-1) <*> pure 1
 
-add :: (PrimMonad m, VM.Storable a) => Array m a -> a -> m (Array m a)
+add :: VM.Storable a => Array a -> a -> V.UpdateM (Array a)
 add arr v
   | arrayTop arr == -1 =
-    if arrayEnd arr == VM.length (arrayStore arr)
+    if arrayEnd arr == V.length (arrayStore arr)
       then pure arr
-      else VM.write (arrayStore arr) (arrayEnd arr) e
+      else V.write (arrayStore arr) (arrayEnd arr) e
         $> arr { arrayEnd = arrayEnd arr + 1 }
   | otherwise = do
-    freeValue <- VM.read (arrayStore arr) (arrayTop arr)
-    VM.write (arrayStore arr) (arrayTop arr) e
+    freeValue <- V.read (arrayStore arr) (arrayTop arr)
+    V.write (arrayStore arr) (arrayTop arr) e
     pure arr { arrayTop = nextFree freeValue }
  where e = FixedArrayElem v 0
 
-delete :: (PrimMonad m, VM.Storable a) => Array m a -> Int -> m (Array m a)
+delete :: VM.Storable a => Array a -> Int -> V.UpdateM (Array a)
 delete arr i
-  =  VM.modify (arrayStore arr) (\e -> e { nextFree = arrayTop arr }) i
+  =  V.modify (arrayStore arr) (\e -> e { nextFree = arrayTop arr }) i
   $> arr { arrayTop = i }
 
-read :: (PrimMonad m, VM.Storable a) => Array m a -> Int -> m (FixedArrayElem a)
-read arr = VM.read (arrayStore arr)
+read :: (V.ReadVec m, VM.Storable a) => Array a -> Int -> m (FixedArrayElem a)
+read arr = V.read (arrayStore arr)
 
-write :: (PrimMonad m, VM.Storable a) => Array m a -> Int -> a -> m ()
+write :: VM.Storable a => Array a -> Int -> a -> V.UpdateM ()
 write arr i v = modify arr (const v) i
 
-modify :: (PrimMonad m, VM.Storable a) => Array m a -> (a -> a) -> Int -> m ()
+modify :: VM.Storable a => Array a -> (a -> a) -> Int -> V.UpdateM ()
 modify arr f =
-  VM.modify (arrayStore arr) (\e -> e { arrayElem = f (arrayElem e) })
+  V.modify (arrayStore arr) (\e -> e { arrayElem = f (arrayElem e) })
 
-indexes :: Array m a -> [Int]
+indexes :: Array a -> [Int]
 indexes arr = [1..arrayEnd arr - 1]
 
-forM_ :: (PrimMonad m, VM.Storable a) => Array m a -> (Int -> a -> m ()) -> m ()
+forM_ :: (V.ReadVec m, VM.Storable a) => Array a -> (Int -> a -> m ()) -> m ()
 forM_ arr f = for_ (indexes arr) $ \i -> do
   e <- read arr i
   unless (nextFree e /= 0) $ f i (arrayElem e)
 
-foldlM :: (PrimMonad m, VM.Storable a)
-       => (b -> Int -> a -> m b) -> b -> Array m a -> m b
+foldlM :: (V.ReadVec m, VM.Storable a)
+       => (b -> Int -> a -> m b) -> b -> Array a -> m b
 foldlM f init arr = F.foldlM f' init (indexes arr)
  where
   f' v i = do

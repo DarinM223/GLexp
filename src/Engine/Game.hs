@@ -8,7 +8,6 @@ module Engine.Game
 import Prelude hiding (init)
 import Control.Lens ((^.), (&), (%~))
 import Control.Monad ((>=>))
-import Control.Monad.Primitive (PrimState)
 import Data.Bits ((.|.))
 import Data.Foldable (foldlM, for_)
 import Engine.MousePicker (calculateMouseRay)
@@ -19,13 +18,12 @@ import Graphics.GL.Core45
 import Graphics.GL.Types
 import Linear ((!!*))
 import qualified Data.Set as S
-import qualified Data.Time.Clock as Clock
 import qualified Data.Vector.Storable as V
-import qualified Data.Vector.Storable.Mutable as VM
 import qualified Engine.FixedArray as FixedArray
 import qualified Engine.Skybox as Skybox
 import qualified Engine.Terrain.Terrain as Terrain
 import qualified Engine.TexturedModel as TexModel
+import qualified Engine.Vec as Vec
 import qualified Engine.Water.FrameBuffers as FrameBuffers
 import qualified Engine.Water.Water as Water
 import qualified Graphics.UI.GLFW as GLFW
@@ -34,21 +32,19 @@ import qualified Linear
 maxLights :: Int
 maxLights = 4
 
-type IOVec a = V.MVector (PrimState IO) a
-
 data Game = Game
   { gameWidth          :: {-# UNPACK #-} !GLfloat
   , gameHeight         :: {-# UNPACK #-} !GLfloat
-  , gameEntities       :: {-# UNPACK #-} !(IOVec Entity)
-  , gameGrasses        :: {-# UNPACK #-} !(IOVec Entity)
-  , gameFerns          :: {-# UNPACK #-} !(IOVec Entity)
-  , gameLamps          :: {-# UNPACK #-} !(IOVec Entity)
-  , gameWaterTiles     :: {-# UNPACK #-} !(IOVec WaterTile)
+  , gameEntities       :: {-# UNPACK #-} !(Vec.Vec Entity)
+  , gameGrasses        :: {-# UNPACK #-} !(Vec.Vec Entity)
+  , gameFerns          :: {-# UNPACK #-} !(Vec.Vec Entity)
+  , gameLamps          :: {-# UNPACK #-} !(Vec.Vec Entity)
+  , gameWaterTiles     :: {-# UNPACK #-} !(Vec.Vec WaterTile)
   , gameProgram        :: {-# UNPACK #-} !TexModel.Program
   , gameCamera         :: {-# UNPACK #-} !Camera
   , gameProj           :: {-# UNPACK #-} !(Linear.M44 GLfloat)
   , gameLights         :: {-# UNPACK #-} !(V.Vector Light)
-  , gameProjectiles    :: {-# UNPACK #-} !(FixedArray.Array IO Projectile)
+  , gameProjectiles    :: {-# UNPACK #-} !(FixedArray.Array Projectile)
   , gameTexture        :: {-# UNPACK #-} !Texture
   , gameRawModel       :: {-# UNPACK #-} !RawModel
   , gameTerrainProgram :: {-# UNPACK #-} !Terrain.Program
@@ -59,7 +55,6 @@ data Game = Game
   , gameWaterProgram   :: {-# UNPACK #-} !Water.Program
   , gameWater          :: {-# UNPACK #-} !Water.Water
   , gameWaterBuffers   :: {-# UNPACK #-} !FrameBuffers.FrameBuffers
-  , gameLastTime       :: {-# UNPACK #-} !Clock.UTCTime
   , gameSkyColor       :: {-# UNPACK #-} !(Linear.V3 GLfloat)
   }
 
@@ -156,14 +151,12 @@ init w h = do
   pack <- loadTexturePack
     "res/grass.png" "res/mud.png" "res/grassFlowers.png" "res/path.png"
   blendMap <- loadTexture "res/blendMap.png"
-  Game
-    <$> pure (fromIntegral w)
-    <*> pure (fromIntegral h)
-    <*> V.unsafeThaw (V.fromList initEntities)
-    <*> V.unsafeThaw (V.fromList grassEntities)
-    <*> V.unsafeThaw (V.fromList fernEntities)
-    <*> V.unsafeThaw (V.fromList lampEntities)
-    <*> V.unsafeThaw (V.fromList waterTiles)
+  Game (fromIntegral w) (fromIntegral h)
+    <$> Vec.fromList initEntities
+    <*> Vec.fromList grassEntities
+    <*> Vec.fromList fernEntities
+    <*> Vec.fromList lampEntities
+    <*> Vec.fromList waterTiles
     <*> TexModel.mkProgram maxLights
     <*> pure camera
     <*> pure proj
@@ -186,7 +179,6 @@ init w h = do
     <*> Water.mkProgram maxLights
     <*> Water.mkWater
     <*> FrameBuffers.init (fromIntegral w) (fromIntegral h)
-    <*> Clock.getCurrentTime
     <*> pure (Linear.V3 0.5 0.5 0.5)
  where
   camera = Camera (Linear.V3 10 2 30) (Linear.V3 0 0 (-1)) (Linear.V3 0 1 0) 0 0
@@ -200,12 +192,10 @@ init w h = do
   light4 =
     Light (Linear.V3 100 17 20) (Linear.V3 2 2 0) (Linear.V3 1 0.01 0.002)
 
-update :: S.Set GLFW.Key -> MouseInfo -> GLfloat -> Game -> IO Game
-update keys mouseInfo dt g0 = do
-  currentTime <- Clock.getCurrentTime
-  let (g0', elapsed) = updateTime currentTime g0 { gameCamera = camera''' }
-  foldlM update' g0' [0..VM.length (gameEntities g0') - 1] >>=
-    (handleLeftClick mouseInfo >=> updateProjectiles elapsed)
+update :: S.Set GLFW.Key -> MouseInfo -> GLfloat -> Game -> Vec.UpdateM Game
+update keys mouseInfo dt g0 =
+  foldlM update' g0' [0..Vec.length (gameEntities g0') - 1] >>=
+    (handleLeftClick mouseInfo >=> updateProjectiles dt)
  where
   (pitch, yaw) = mouseOldPitchYaw mouseInfo
   camera' = (gameCamera g0)
@@ -220,16 +210,18 @@ update keys mouseInfo dt g0 = do
   terrainHeight = Terrain.heightAt cx cz (gameTerrain1 g0) + 1
   camera''' = camera'' { cameraPos = Linear.V3 cx terrainHeight cz }
 
-  update' :: Game -> Int -> IO Game
+  g0' = updateTime dt g0 { gameCamera = camera''' }
+
+  update' :: Game -> Int -> Vec.UpdateM Game
   update' !g i = do
     let
       updateEntity :: Entity -> Entity
       updateEntity !e = e
         { entityRot = entityRot e * Linear.axisAngle (Linear.V3 0 1 0) 0.01 }
-    VM.modify (gameEntities g) updateEntity i
+    Vec.modify (gameEntities g) updateEntity i
     return g
 
-updateProjectiles :: GLfloat -> Game -> IO Game
+updateProjectiles :: GLfloat -> Game -> Vec.UpdateM Game
 updateProjectiles elapsed g
   =   (\ps' -> g { gameProjectiles = ps' })
   <$> FixedArray.foldlM updateProjectile ps ps
@@ -244,16 +236,10 @@ updateProjectiles elapsed g
       then FixedArray.delete ps' i
       else pure ps'
 
-updateTime :: Clock.UTCTime -> Game -> (Game, GLfloat)
-updateTime currentTime g = (g', elapsed)
- where
-  elapsed = realToFrac . Clock.nominalDiffTimeToSeconds
-          $ Clock.diffUTCTime currentTime (gameLastTime g)
-  g' = g { gameLastTime = currentTime
-         , gameWater    = Water.update elapsed (gameWater g)
-         }
+updateTime :: GLfloat -> Game -> Game
+updateTime elapsed g = g { gameWater = Water.update elapsed (gameWater g) }
 
-handleLeftClick :: MouseInfo -> Game -> IO Game
+handleLeftClick :: MouseInfo -> Game -> Vec.UpdateM Game
 handleLeftClick info g = case mouseLeftCoords info of
   Coords x y ->
     let
@@ -277,14 +263,14 @@ handleLeftClick info g = case mouseLeftCoords info of
 draw :: Game -> IO ()
 draw g = do
   let view = toViewMatrix $ gameCamera g
-  waterTile <- VM.read (gameWaterTiles g) 0
+  waterTile <- Vec.read (gameWaterTiles g) 0
 
   glEnable GL_CLIP_DISTANCE0
   FrameBuffers.bindReflectionFrameBuffer $ gameWaterBuffers g
   let
     distance = 2 * cameraPos (gameCamera g) ^. Linear._y - tileHeight waterTile
     camera'  = (gameCamera g) { cameraPos = cameraPos (gameCamera g)
-                                          & Linear._y %~ (subtract distance)
+                                          & Linear._y %~ subtract distance
                               }
     view' = toViewMatrix $ invertPitch camera'
   drawScene g view' (Linear.V4 0 1 0 (-tileHeight waterTile + 1))
@@ -305,8 +291,8 @@ draw g = do
     (Water.moveFactor (gameWater g))
   Water.setLights (gameWaterProgram g) (gameLights g)
   Water.setTextures (gameWaterProgram g) (gameWaterBuffers g) (gameWater g)
-  for_ [0..VM.length (gameWaterTiles g) - 1] $ \i -> do
-    tile <- VM.read (gameWaterTiles g) i
+  for_ [0..Vec.length (gameWaterTiles g) - 1] $ \i -> do
+    tile <- Vec.read (gameWaterTiles g) i
     Water.drawTile (gameWater g) tile (gameWaterProgram g)
   Water.unbind
 
@@ -335,8 +321,8 @@ drawScene g view clipPlane = do
   TexModel.setTexture (gameProgram g) (gameTexture g)
 
   glBindVertexArray $ modelVao $ gameRawModel g
-  for_ [0..VM.length (gameEntities g) - 1] $ \i -> do
-    e <- VM.read (gameEntities g) i
+  for_ [0..Vec.length (gameEntities g) - 1] $ \i -> do
+    e <- Vec.read (gameEntities g) i
 
     let rotM33 = Linear.fromQuaternion (entityRot e) !!* entityScale e
         matrix = Linear.mkTransformationMat rotM33 (entityPos e)
@@ -371,13 +357,13 @@ drawScene g view clipPlane = do
   Skybox.draw $ gameSkybox g
   glDepthFunc GL_LESS
 
-drawEntities :: TexModel.Program -> IOVec Entity -> IO ()
+drawEntities :: TexModel.Program -> Vec.Vec Entity -> IO ()
 drawEntities p v = do
-  e0 <- VM.read v 0
+  e0 <- Vec.read v 0
   TexModel.setTexture p $ entityTex e0
   glBindVertexArray $ modelVao $ entityModel e0
-  for_ [0..VM.length v - 1] $ \i -> do
-    e <- VM.read v i
+  for_ [0..Vec.length v - 1] $ \i -> do
+    e <- Vec.read v i
     TexModel.setModel p
       (Linear.mkTransformationMat Linear.identity (entityPos e))
     TexModel.setOffset p (textureXOffset e) (textureYOffset e)
