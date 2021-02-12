@@ -113,6 +113,23 @@ data Texture = Texture
   } deriving Show
 $(deriveStorable ''Texture)
 
+data Character = Character
+  { charId       :: {-# UNPACK #-} !Int
+  , charX        :: {-# UNPACK #-} !GLfloat
+  , charY        :: {-# UNPACK #-} !GLfloat
+  , charWidth    :: {-# UNPACK #-} !GLfloat
+  , charHeight   :: {-# UNPACK #-} !GLfloat
+  , charXOffset  :: {-# UNPACK #-} !GLfloat
+  , charYOffset  :: {-# UNPACK #-} !GLfloat
+  , charXAdvance :: {-# UNPACK #-} !GLfloat
+  } deriving Show
+$(deriveStorable ''Character)
+
+data Line = Line
+  { lineY       :: {-# UNPACK #-} !GLfloat
+  , lineCursorX :: {-# UNPACK #-} !GLfloat
+  } deriving Show
+
 data Entity = Entity
   { entityPos    :: {-# UNPACK #-} !(Linear.V3 GLfloat)
   , entityRot    :: {-# UNPACK #-} !(Linear.Quaternion GLfloat)

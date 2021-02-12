@@ -6,6 +6,7 @@ module Engine.Utils
   , loadShader
   , loadTexture
   , loadTexturePack
+  , loadFont
   , linkShaders
   , loadVAO
   , loadVAOWithIndices
@@ -17,6 +18,8 @@ import Codec.Picture
 import Control.Exception (throwIO)
 import Control.Monad (join, when)
 import Data.Foldable (traverse_)
+import Data.Function ((&))
+import Data.Void (Void)
 import Engine.Types
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Array (allocaArray, peekArray)
@@ -25,13 +28,21 @@ import Foreign.Ptr (castPtr, nullPtr, plusPtr)
 import Foreign.Storable (Storable (..), peek, sizeOf)
 import Graphics.GL.Core45
 import Graphics.GL.Types
+import System.IO (IOMode (ReadMode), withFile)
+import Text.Megaparsec (Parsec, empty, errorBundlePretty, runParser)
+import Text.Megaparsec.Byte (space1, string)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Unsafe as BS
 import qualified Data.Text.Lazy as T
 import qualified Data.Text.Lazy.IO as T
 import qualified Data.Vector as Vec
 import qualified Data.Vector.Storable as V
+import qualified Data.Vector.Storable.Mutable as VM
 import qualified Linear
+import qualified Streamly.External.ByteString as SBS
+import qualified Streamly.FileSystem.Handle as SF
+import qualified Streamly.Prelude as S
+import qualified Text.Megaparsec.Byte.Lexer as L
 
 perspectiveMat :: Int -> Int -> Linear.M44 GLfloat
 perspectiveMat width height =
@@ -118,9 +129,8 @@ loadVAOWithIndices v e = V.unsafeWith v $ \vPtr ->
   stride = fromIntegral $ sizeOf (undefined :: GLfloat) * 5
 
 loadObj :: FilePath -> IO RawModel
-loadObj path = fmap
-  (V.fromList . convertVec . foldr build ([], [], [], []) . T.lines)
-  (T.readFile path) >>= toRawModel
+loadObj path = T.readFile path >>=
+  toRawModel . V.fromList . convertVec . foldr build ([], [], [], []) . T.lines
  where
   build line (!vs, !vts, !vns, !fs) = case headWord of
     Just "v"  -> (parse3:vs, vts, vns, fs)
@@ -187,6 +197,35 @@ loadObj path = fmap
    where
     vSize = fromIntegral $ sizeOf (undefined :: GLfloat) * V.length v
     stride = fromIntegral $ sizeOf (undefined :: GLfloat) * 8
+
+parseCharacter :: BS.ByteString -> Character
+parseCharacter s = case runParser parse' "" s of
+  Left err -> error $ errorBundlePretty err
+  Right v  -> v
+ where
+  sc = L.space space1 empty empty
+  parse' :: Parsec Void BS.ByteString Character
+  parse' = Character
+       <$> (string "char id=" *> L.decimal <* sc)
+       <*> (string "x=" *> L.signed sc L.decimal <* sc)
+       <*> (string "y=" *> L.signed sc L.decimal <* sc)
+       <*> (string "width=" *> L.signed sc L.decimal <* sc)
+       <*> (string "height=" *> L.signed sc L.decimal <* sc)
+       <*> (string "xoffset=" *> L.signed sc L.decimal <* sc)
+       <*> (string "yoffset=" *> L.signed sc L.decimal <* sc)
+       <*> (string "xadvance=" *> L.signed sc L.decimal <* sc)
+
+loadFont :: FilePath -> IO (VM.IOVector Character)
+loadFont path = do
+  chars <- VM.new 256
+  withFile path ReadMode $ \handle ->
+    S.unfold SF.read handle
+      & S.splitOn (== 10) SBS.write
+      & S.drop 4
+      & S.filter ((> 0) . BS.length)
+      & S.map parseCharacter
+      & S.mapM_ (\ch -> VM.write chars (charId ch) ch)
+  return chars
 
 loadTexture :: FilePath -> IO Texture
 loadTexture path = do

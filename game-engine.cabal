@@ -24,6 +24,7 @@ common opts
                -Wredundant-constraints
                -Wunused-packages
                -fshow-hole-constraints
+               -fobject-code
                -haddock
 
 library
@@ -52,8 +53,11 @@ library
                      , JuicyPixels
                      , lens
                      , linear
+                     , megaparsec
                      , primitive
                      , raw-strings-qq
+                     , streamly
+                     , streamly-bytestring
                      , text
                      , vector
   hs-source-dirs:      src
