@@ -45,6 +45,7 @@ library
   -- other-modules:
   -- other-extensions:
   build-depends:       base ^>=4.14.0.0
+                     , attoparsec
                      , bytestring
                      , containers
                      , derive-storable-th
@@ -53,7 +54,6 @@ library
                      , JuicyPixels
                      , lens
                      , linear
-                     , megaparsec
                      , primitive
                      , raw-strings-qq
                      , streamly

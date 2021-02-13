@@ -18,10 +18,10 @@ import Codec.Picture
 import Control.Exception (throwIO)
 import Control.Monad (when)
 import Control.Monad.IO.Class (MonadIO (liftIO))
+import Data.Attoparsec.ByteString.Char8
 import Data.Char (ord)
 import Data.Foldable (for_, traverse_)
 import Data.Function ((&))
-import Data.Void (Void)
 import Engine.Types
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Array (allocaArray, peekArray)
@@ -31,8 +31,6 @@ import Foreign.Storable (Storable (..), peek, sizeOf)
 import Graphics.GL.Core45
 import Graphics.GL.Types
 import System.IO (IOMode (ReadMode), withFile)
-import Text.Megaparsec (Parsec, empty, errorBundlePretty, runParser)
-import Text.Megaparsec.Byte (char, space1, string)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Unsafe as BS
 import qualified Data.Vector.Storable as V
@@ -43,7 +41,6 @@ import qualified Streamly.FileSystem.Handle as SF
 import qualified Streamly.Internal.Data.Fold as FL
 import qualified Streamly.Internal.Memory.Array as A
 import qualified Streamly.Prelude as S
-import qualified Text.Megaparsec.Byte.Lexer as L
 
 perspectiveMat :: Int -> Int -> Linear.M44 GLfloat
 perspectiveMat width height =
@@ -164,26 +161,22 @@ loadObj path = do
   isVC c arr = A.readIndex arr 0 == Just (fromIntegral (ord 'v'))
             && A.readIndex arr 1 == Just (fromIntegral (ord c))
 
-  sc = L.space space1 empty empty
-
-  parse2d :: BS.ByteString -> Parsec Void BS.ByteString TwoDPoint
   parse2d s = TwoDPoint
-          <$> (string s *> sc *> L.signed sc L.float <* sc)
-          <*> L.signed sc L.float
+          <$> (string s *> skipSpace *> signed rational <* skipSpace)
+          <*> signed rational
   parse3d s = ThreeDPoint
-          <$> (string s *> sc *> L.signed sc L.float <* sc)
-          <*> (L.signed sc L.float <* sc)
-          <*> L.signed sc L.float
+          <$> (string s *> skipSpace *> signed rational <* skipSpace)
+          <*> (signed rational <* skipSpace)
+          <*> signed rational
   parseSlashes = ThreeTuple
-    <$> (L.decimal <* char slash) <*> (L.decimal <* char slash) <*> L.decimal
-   where slash = fromIntegral $ ord '/'
+    <$> (decimal <* char '/') <*> (decimal <* char '/') <*> decimal
   parseFragment = FData
-              <$> (char (fromIntegral (ord 'f')) *> sc *> parseSlashes)
-              <*> (sc *> parseSlashes <* sc)
+              <$> (char 'f' *> skipSpace *> parseSlashes)
+              <*> (skipSpace *> parseSlashes <* skipSpace)
               <*> parseSlashes
 
-  runPointParser p arr = case runParser p "" (SBS.fromArray arr) of
-    Left err -> error $ errorBundlePretty err
+  runPointParser p arr = case parseOnly p (SBS.fromArray arr) of
+    Left err -> error err
     Right v  -> v
   parseV arr = runPointParser (parse3d "v") arr
   parseVn arr = runPointParser (parse3d "vn") arr
@@ -227,21 +220,19 @@ loadObj path = do
     stride = fromIntegral $ sizeOf (undefined :: GLfloat) * 8
 
 parseCharacter :: BS.ByteString -> Character
-parseCharacter s = case runParser parse' "" s of
-  Left err -> error $ errorBundlePretty err
+parseCharacter s = case parseOnly parse' s of
+  Left err -> error err
   Right v  -> v
  where
-  sc = L.space space1 empty empty
-  parse' :: Parsec Void BS.ByteString Character
   parse' = Character
-       <$> (string "char id=" *> L.decimal <* sc)
-       <*> (string "x=" *> L.signed sc L.decimal <* sc)
-       <*> (string "y=" *> L.signed sc L.decimal <* sc)
-       <*> (string "width=" *> L.signed sc L.decimal <* sc)
-       <*> (string "height=" *> L.signed sc L.decimal <* sc)
-       <*> (string "xoffset=" *> L.signed sc L.decimal <* sc)
-       <*> (string "yoffset=" *> L.signed sc L.decimal <* sc)
-       <*> (string "xadvance=" *> L.signed sc L.decimal <* sc)
+       <$> (string "char id=" *> signed decimal <* skipSpace)
+       <*> (string "x=" *> signed rational <* skipSpace)
+       <*> (string "y=" *> signed rational <* skipSpace)
+       <*> (string "width=" *> signed rational <* skipSpace)
+       <*> (string "height=" *> signed rational <* skipSpace)
+       <*> (string "xoffset=" *> signed rational <* skipSpace)
+       <*> (string "yoffset=" *> signed rational <* skipSpace)
+       <*> (string "xadvance=" *> signed rational <* skipSpace)
 
 loadFont :: FilePath -> IO (VM.IOVector Character)
 loadFont path = do
