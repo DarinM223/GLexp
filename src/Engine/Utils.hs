@@ -19,7 +19,6 @@ import Control.Exception (throwIO)
 import Control.Monad (when)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Attoparsec.ByteString.Char8
-import Data.Char (ord)
 import Data.Foldable (for_, traverse_)
 import Data.Function ((&))
 import Engine.Types
@@ -32,6 +31,7 @@ import Graphics.GL.Core45
 import Graphics.GL.Types
 import System.IO (IOMode (ReadMode), withFile)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString.Unsafe as BS
 import qualified Data.Vector.Storable as V
 import qualified Data.Vector.Storable.Mutable as VM
@@ -130,9 +130,10 @@ loadObj :: FilePath -> IO RawModel
 loadObj path = do
   (vs, vts, vns, fs) <- withFile path ReadMode $ \handle ->
     S.unfold SF.read handle
-      & S.splitOn (== 10) A.write
+      & S.splitOn (== 10) SBS.write
+      & S.filter ((> 1) . BSC.length)
       & S.fold ((,,,) <$> foldV <*> foldVt <*> foldVn <*> foldF)
-  vec <- liftIO $ VM.new (A.length fs * 24)
+  vec <- VM.new (A.length fs * 24)
   S.unfold A.read fs
     & S.foldlM' (writeVec vs vts vns vec) (0 :: Int)
     & S.drain
@@ -156,10 +157,14 @@ loadObj path = do
       VM.write vec (i + 6) (threeDY vn)
       VM.write vec (i + 7) (threeDZ vn)
 
-  isC c arr = A.readIndex arr 0 == Just (fromIntegral (ord c))
-           && A.readIndex arr 1 == Just (fromIntegral (ord ' '))
-  isVC c arr = A.readIndex arr 0 == Just (fromIntegral (ord 'v'))
-            && A.readIndex arr 1 == Just (fromIntegral (ord c))
+  foldV = FL.lfilter (isC 'v') (FL.lmap (run (parse3d "v")) A.write)
+  foldVt = FL.lfilter (isVC 't') (FL.lmap (run (parse2d "vt")) A.write)
+  foldVn = FL.lfilter (isVC 'n') (FL.lmap (run (parse3d "vn")) A.write)
+  foldF = FL.lfilter (isC 'f') (FL.lmap (run parseFragment) A.write)
+
+  run p = either error id . parseOnly p
+  isC c arr = BSC.index arr 0 == c && BSC.index arr 1 == ' '
+  isVC c arr = BSC.index arr 0 == 'v' && BSC.index arr 1 == c
 
   parse2d s = TwoDPoint
           <$> (string s *> skipSpace *> signed rational <* skipSpace)
@@ -168,24 +173,12 @@ loadObj path = do
           <$> (string s *> skipSpace *> signed rational <* skipSpace)
           <*> (signed rational <* skipSpace)
           <*> signed rational
-  parseSlashes = ThreeTuple
-    <$> (decimal <* char '/') <*> (decimal <* char '/') <*> decimal
   parseFragment = FData
               <$> (char 'f' *> skipSpace *> parseSlashes)
               <*> (skipSpace *> parseSlashes <* skipSpace)
               <*> parseSlashes
-
-  runPointParser p arr = case parseOnly p (SBS.fromArray arr) of
-    Left err -> error err
-    Right v  -> v
-  parseV arr = runPointParser (parse3d "v") arr
-  parseVn arr = runPointParser (parse3d "vn") arr
-  parseVt arr = runPointParser (parse2d "vt") arr
-
-  foldV = FL.lfilter (isC 'v') (FL.lmap parseV A.write)
-  foldVt = FL.lfilter (isVC 't') (FL.lmap parseVt A.write)
-  foldVn = FL.lfilter (isVC 'n') (FL.lmap parseVn A.write)
-  foldF = FL.lfilter (isC 'f') (FL.lmap (runPointParser parseFragment) A.write)
+  parseSlashes = ThreeTuple
+    <$> (decimal <* char '/') <*> (decimal <* char '/') <*> decimal
 
   toRawModel v = VM.unsafeWith v $ \vPtr -> do
     vao <- alloca $ \vaoPtr -> do
@@ -220,9 +213,7 @@ loadObj path = do
     stride = fromIntegral $ sizeOf (undefined :: GLfloat) * 8
 
 parseCharacter :: BS.ByteString -> Character
-parseCharacter s = case parseOnly parse' s of
-  Left err -> error err
-  Right v  -> v
+parseCharacter = either error id . parseOnly parse'
  where
   parse' = Character
        <$> (string "char id=" *> signed decimal <* skipSpace)
