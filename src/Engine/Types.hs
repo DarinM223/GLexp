@@ -125,6 +125,33 @@ data Character = Character
   } deriving Show
 $(deriveStorable ''Character)
 
+data TwoDPoint = TwoDPoint
+  { twoDX :: {-# UNPACK #-} !GLfloat
+  , twoDY :: {-# UNPACK #-} !GLfloat
+  } deriving Show
+$(deriveStorable ''TwoDPoint)
+
+data ThreeDPoint = ThreeDPoint
+  { threeDX :: {-# UNPACK #-} !GLfloat
+  , threeDY :: {-# UNPACK #-} !GLfloat
+  , threeDZ :: {-# UNPACK #-} !GLfloat
+  } deriving Show
+$(deriveStorable ''ThreeDPoint)
+
+data ThreeTuple = ThreeTuple
+  { t1 :: {-# UNPACK #-} !Int
+  , t2 :: {-# UNPACK #-} !Int
+  , t3 :: {-# UNPACK #-} !Int
+  } deriving Show
+$(deriveStorable ''ThreeTuple)
+
+data FData = FData
+  { fA :: {-# UNPACK #-} !ThreeTuple
+  , fB :: {-# UNPACK #-} !ThreeTuple
+  , fC :: {-# UNPACK #-} !ThreeTuple
+  } deriving Show
+$(deriveStorable ''FData)
+
 data Line = Line
   { lineY       :: {-# UNPACK #-} !GLfloat
   , lineCursorX :: {-# UNPACK #-} !GLfloat

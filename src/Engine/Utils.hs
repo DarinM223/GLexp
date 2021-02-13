@@ -16,8 +16,10 @@ module Engine.Utils
 
 import Codec.Picture
 import Control.Exception (throwIO)
-import Control.Monad (join, when)
-import Data.Foldable (traverse_)
+import Control.Monad (when)
+import Control.Monad.IO.Class (MonadIO (liftIO))
+import Data.Char (ord)
+import Data.Foldable (for_, traverse_)
 import Data.Function ((&))
 import Data.Void (Void)
 import Engine.Types
@@ -30,17 +32,16 @@ import Graphics.GL.Core45
 import Graphics.GL.Types
 import System.IO (IOMode (ReadMode), withFile)
 import Text.Megaparsec (Parsec, empty, errorBundlePretty, runParser)
-import Text.Megaparsec.Byte (space1, string)
+import Text.Megaparsec.Byte (char, space1, string)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Unsafe as BS
-import qualified Data.Text.Lazy as T
-import qualified Data.Text.Lazy.IO as T
-import qualified Data.Vector as Vec
 import qualified Data.Vector.Storable as V
 import qualified Data.Vector.Storable.Mutable as VM
 import qualified Linear
 import qualified Streamly.External.ByteString as SBS
 import qualified Streamly.FileSystem.Handle as SF
+import qualified Streamly.Internal.Data.Fold as FL
+import qualified Streamly.Internal.Memory.Array as A
 import qualified Streamly.Prelude as S
 import qualified Text.Megaparsec.Byte.Lexer as L
 
@@ -129,44 +130,71 @@ loadVAOWithIndices v e = V.unsafeWith v $ \vPtr ->
   stride = fromIntegral $ sizeOf (undefined :: GLfloat) * 5
 
 loadObj :: FilePath -> IO RawModel
-loadObj path = T.readFile path >>=
-  toRawModel . V.fromList . convertVec . foldr build ([], [], [], []) . T.lines
+loadObj path = do
+  (vs, vts, vns, fs) <- withFile path ReadMode $ \handle ->
+    S.unfold SF.read handle
+      & S.splitOn (== 10) A.write
+      & S.fold ((,,,) <$> foldV <*> foldVt <*> foldVn <*> foldF)
+  vec <- liftIO $ VM.new (A.length fs * 24)
+  S.unfold A.read fs
+    & S.foldlM' (writeVec vs vts vns vec) (0 :: Int)
+    & S.drain
+  toRawModel vec
  where
-  build line (!vs, !vts, !vns, !fs) = case headWord of
-    Just "v"  -> (parse3:vs, vts, vns, fs)
-    Just "vt" -> (vs, parse2:vts, vns, fs)
-    Just "vn" -> (vs, vts, parse3:vns, fs)
-    Just "f"  -> (vs, vts, vns, parseF:fs)
-    _         -> (vs, vts, vns, fs)
-   where
-    parse2 :: [GLfloat]
-    parse2 = [read $ T.unpack $ words0 !! 1, read $ T.unpack $ words0 !! 2]
+  writeVec vs vts vns vec i f = liftIO $ do
+    writeVertex i (fA f) vec vs vts vns
+    writeVertex (i + 8) (fB f) vec vs vts vns
+    writeVertex (i + 16) (fC f) vec vs vts vns
+    return (i + 24)
+  writeVertex i (ThreeTuple a b c) vec vs vts vns = do
+    for_ (A.readIndex vs (a - 1)) $ \v -> do
+      VM.write vec i (threeDX v)
+      VM.write vec (i + 1) (threeDY v)
+      VM.write vec (i + 2) (threeDZ v)
+    for_ (A.readIndex vts (b - 1)) $ \vt -> do
+      VM.write vec (i + 3) (twoDX vt)
+      VM.write vec (i + 4) (twoDY vt)
+    for_ (A.readIndex vns (c - 1)) $ \vn -> do
+      VM.write vec (i + 5) (threeDX vn)
+      VM.write vec (i + 6) (threeDY vn)
+      VM.write vec (i + 7) (threeDZ vn)
 
-    parse3 :: [GLfloat]
-    parse3 = [ read $ T.unpack $ words0 !! 1
-             , read $ T.unpack $ words0 !! 2
-             , read $ T.unpack $ words0 !! 3 ]
+  isC c arr = A.readIndex arr 0 == Just (fromIntegral (ord c))
+           && A.readIndex arr 1 == Just (fromIntegral (ord ' '))
+  isVC c arr = A.readIndex arr 0 == Just (fromIntegral (ord 'v'))
+            && A.readIndex arr 1 == Just (fromIntegral (ord c))
 
-    parseF = (words0 !! 1, words0 !! 2, words0 !! 3)
+  sc = L.space space1 empty empty
 
-    words0 = filter (/= "") $ T.splitOn " " line
-    headWord = case words0 of
-      []  -> Nothing
-      h:_ -> Just h
-  convertVec (vs, vts, vns, fs) = fs >>= combineParams
-   where
-    vs' = Vec.fromList vs
-    vts' = Vec.fromList vts
-    vns' = Vec.fromList vns
-    combineParams (a, b, c) =
-      combineVertex a <> combineVertex b <> combineVertex c
-    combineVertex v = join [vs' Vec.! p0, vts' Vec.! p1, vns' Vec.! p2]
-     where
-      params = T.splitOn "/" v
-      p0 = read (T.unpack $ head params) - 1
-      p1 = read (T.unpack $ params !! 1) - 1
-      p2 = read (T.unpack $ params !! 2) - 1
-  toRawModel v = V.unsafeWith v $ \vPtr -> do
+  parse2d :: BS.ByteString -> Parsec Void BS.ByteString TwoDPoint
+  parse2d s = TwoDPoint
+          <$> (string s *> sc *> L.signed sc L.float <* sc)
+          <*> L.signed sc L.float
+  parse3d s = ThreeDPoint
+          <$> (string s *> sc *> L.signed sc L.float <* sc)
+          <*> (L.signed sc L.float <* sc)
+          <*> L.signed sc L.float
+  parseSlashes = ThreeTuple
+    <$> (L.decimal <* char slash) <*> (L.decimal <* char slash) <*> L.decimal
+   where slash = fromIntegral $ ord '/'
+  parseFragment = FData
+              <$> (char (fromIntegral (ord 'f')) *> sc *> parseSlashes)
+              <*> (sc *> parseSlashes <* sc)
+              <*> parseSlashes
+
+  runPointParser p arr = case runParser p "" (SBS.fromArray arr) of
+    Left err -> error $ errorBundlePretty err
+    Right v  -> v
+  parseV arr = runPointParser (parse3d "v") arr
+  parseVn arr = runPointParser (parse3d "vn") arr
+  parseVt arr = runPointParser (parse2d "vt") arr
+
+  foldV = FL.lfilter (isC 'v') (FL.lmap parseV A.write)
+  foldVt = FL.lfilter (isVC 't') (FL.lmap parseVt A.write)
+  foldVn = FL.lfilter (isVC 'n') (FL.lmap parseVn A.write)
+  foldF = FL.lfilter (isC 'f') (FL.lmap (runPointParser parseFragment) A.write)
+
+  toRawModel v = VM.unsafeWith v $ \vPtr -> do
     vao <- alloca $ \vaoPtr -> do
       glGenVertexArrays 1 vaoPtr
       peek vaoPtr
@@ -192,10 +220,10 @@ loadObj path = T.readFile path >>=
     glBindBuffer GL_ARRAY_BUFFER 0
     glBindVertexArray 0
     return RawModel { modelVao         = vao
-                    , modelVertexCount = fromIntegral $ V.length v `quot` 8
+                    , modelVertexCount = fromIntegral $ VM.length v `quot` 8
                     }
    where
-    vSize = fromIntegral $ sizeOf (undefined :: GLfloat) * V.length v
+    vSize = fromIntegral $ sizeOf (undefined :: GLfloat) * VM.length v
     stride = fromIntegral $ sizeOf (undefined :: GLfloat) * 8
 
 parseCharacter :: BS.ByteString -> Character
