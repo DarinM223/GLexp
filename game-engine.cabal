@@ -24,6 +24,7 @@ common opts
                -Wredundant-constraints
                -Wunused-packages
                -fshow-hole-constraints
+               -fobject-code
                -haddock
 
 library
@@ -44,6 +45,7 @@ library
   -- other-modules:
   -- other-extensions:
   build-depends:       base ^>=4.14.0.0
+                     , attoparsec
                      , bytestring
                      , containers
                      , derive-storable-th
@@ -54,6 +56,8 @@ library
                      , linear
                      , primitive
                      , raw-strings-qq
+                     , streamly
+                     , streamly-bytestring
                      , text
                      , vector
   hs-source-dirs:      src
