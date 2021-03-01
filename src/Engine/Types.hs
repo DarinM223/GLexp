@@ -157,6 +157,17 @@ data Line = Line
   , lineCursorX :: {-# UNPACK #-} !GLfloat
   } deriving Show
 
+data Particle = Particle
+  { particlePosition      :: {-# UNPACK #-} !(Linear.V3 GLfloat)
+  , particleVelocity      :: {-# UNPACK #-} !(Linear.V3 GLfloat)
+  , particleGravityEffect :: {-# UNPACK #-} !GLfloat
+  , particleLife          :: {-# UNPACK #-} !GLfloat
+  , particleRotation      :: {-# UNPACK #-} !GLfloat
+  , particleScale         :: {-# UNPACK #-} !GLfloat
+  , particleElapsed       :: {-# UNPACK #-} !GLfloat
+  } deriving Show
+$(deriveStorable ''Particle)
+
 data Entity = Entity
   { entityPos    :: {-# UNPACK #-} !(Linear.V3 GLfloat)
   , entityRot    :: {-# UNPACK #-} !(Linear.Quaternion GLfloat)
@@ -176,9 +187,9 @@ textureYOffset e = row / fromIntegral (textureNumRows (entityTex e))
  where row = fromIntegral $ entityTexIdx e `quot` textureNumRows (entityTex e)
 
 data Projectile = Projectile
-  { projectileLife     :: {-# UNPACK #-} !GLfloat
-  , projectileRay      :: {-# UNPACK #-} !(Linear.V3 GLfloat)
-  , projectileEntity   :: {-# UNPACK #-} !Entity
+  { projectileLife   :: {-# UNPACK #-} !GLfloat
+  , projectileRay    :: {-# UNPACK #-} !(Linear.V3 GLfloat)
+  , projectileEntity :: {-# UNPACK #-} !Entity
   }
 $(deriveStorable ''Projectile)
 
