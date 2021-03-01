@@ -123,7 +123,7 @@ modelViewMatrix p view = view !*! model''
   -- Set model rotation matrix to transpose of view matrix to "cancel" it out.
   model' = model & _m33 .~ transpose (view ^. _m33)
   -- Apply particle rotation and scale.
-  model'' = model' & _m33 %~ ((^* scale) . (rot !*!))
+  model'' = model' & _m33 %~ ((^* scale) . (!*! rot))
 
 draw :: RawModel -> IO ()
 draw = glDrawArrays GL_TRIANGLE_STRIP 0 . modelVertexCount
