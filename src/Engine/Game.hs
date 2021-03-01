@@ -60,7 +60,7 @@ data Game = Game
   , gameWaterProgram    :: {-# UNPACK #-} !Water.Program
   , gameWater           :: {-# UNPACK #-} !Water.Water
   , gameWaterBuffers    :: {-# UNPACK #-} !FrameBuffers.FrameBuffers
-  , gameParticleModel   :: {-# UNPACK #-} !RawModel
+  , gameParticleModel   :: {-# UNPACK #-} !Particle.Particles
   , gameParticles       :: {-# UNPACK #-} !(FixedArray.Array Particle)
   , gameParticleProgram :: {-# UNPACK #-} !Particle.Program
   , gameSkyColor        :: {-# UNPACK #-} !(Linear.V3 GLfloat)
@@ -187,7 +187,7 @@ init w h = do
     <*> Water.mkProgram maxLights
     <*> Water.mkWater
     <*> FrameBuffers.init (fromIntegral w) (fromIntegral h)
-    <*> Particle.mkParticleModel
+    <*> Particle.mkParticles "res/particleStar.png"
     <*> FixedArray.new 1000
     <*> Particle.mkProgram
     <*> pure (Linear.V3 0.5 0.5 0.5)
@@ -263,7 +263,7 @@ updateParticles elapsed g = do
     dirZ = zrand * 2 - 1
 
     v = Linear.normalize (Linear.V3 dirX 1 dirZ) Linear.^* speed
-    p = Particle center v gravityEffect lifeLength (pi / 4) 1 0
+    p = Particle center v gravityEffect lifeLength 0 1 0
   updateParticle ps i p
     | Particle.alive p' = ps <$ FixedArray.write ps i p'
     | otherwise         = FixedArray.delete ps i

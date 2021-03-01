@@ -2,10 +2,11 @@
 {-# LANGUAGE RecordWildCards #-}
 module Engine.Particle
   ( Program
+  , Particles (..)
   , gravity
   , update
   , alive
-  , mkParticleModel
+  , mkParticles
   , mkProgram
   , prepare
   , setProj
@@ -22,7 +23,7 @@ import Foreign.Ptr (castPtr)
 import Graphics.GL.Core45
 import Graphics.GL.Types
 import Engine.Types
-import Engine.Utils (linkShaders, loadShader, loadVAO)
+import Engine.Utils (linkShaders, loadShader, loadTexture, loadVAO)
 import Linear
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Vector.Storable as V
@@ -34,11 +35,14 @@ vertexShaderSrc = BS.pack
     #version 330 core
 
     in vec2 position;
+    out vec2 texCoord;
 
     uniform mat4 projection;
     uniform mat4 modelView;
 
     void main() {
+      texCoord = position + vec2(0.5, 0.5);
+      texCoord.y = 1.0 - texCoord.y;
       gl_Position = projection * modelView * vec4(position, 0.0, 1.0);
     }
   |]
@@ -47,10 +51,13 @@ fragmentShaderSrc :: BS.ByteString
 fragmentShaderSrc = BS.pack
   [QQ.r|
     #version 330 core
+    in vec2 texCoord;
     out vec4 color;
 
+    uniform sampler2D tex;
+
     void main () {
-      color = vec4(1.0);
+      color = texture(tex, texCoord);
     }
   |]
 
@@ -73,8 +80,13 @@ alive p = particleElapsed p < particleLife p
 vertices :: V.Vector GLfloat
 vertices = V.fromList [-0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5, -0.5]
 
-mkParticleModel :: IO RawModel
-mkParticleModel = loadVAO vertices 2
+data Particles = Particles
+  { particlesModel   :: {-# UNPACK #-} !RawModel
+  , particlesTexture :: {-# UNPACK #-} !Texture
+  }
+
+mkParticles :: FilePath -> IO Particles
+mkParticles path = Particles <$> loadVAO vertices 2 <*> loadTexture path
 
 data Program = Program
   { program :: {-# UNPACK #-} !GLuint
@@ -96,13 +108,15 @@ mkProgram = do
   loadVertexShader = loadShader GL_VERTEX_SHADER vertexShaderSrc
   loadFragmentShader = loadShader GL_FRAGMENT_SHADER fragmentShaderSrc
 
-prepare :: Program -> RawModel -> IO ()
-prepare p model = do
+prepare :: Program -> Particles -> IO ()
+prepare p particles = do
   glUseProgram $ program p
-  glBindVertexArray $ modelVao model
+  glBindVertexArray $ modelVao $ particlesModel particles
   glEnableVertexAttribArray 0
+  glActiveTexture GL_TEXTURE0
+  glBindTexture GL_TEXTURE_2D $ textureID $ particlesTexture particles
   glEnable GL_BLEND
-  glBlendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
+  glBlendFunc GL_SRC_ALPHA GL_ONE
   glDepthMask GL_FALSE
 
 setProj :: Program -> M44 GLfloat -> IO ()
@@ -125,12 +139,13 @@ modelViewMatrix p view = view !*! model''
   -- Apply particle rotation and scale.
   model'' = model' & _m33 %~ ((^* scale) . (!*! rot))
 
-draw :: RawModel -> IO ()
-draw = glDrawArrays GL_TRIANGLE_STRIP 0 . modelVertexCount
+draw :: Particles -> IO ()
+draw = glDrawArrays GL_TRIANGLE_STRIP 0 . modelVertexCount . particlesModel
 
 unbind :: IO ()
 unbind = do
   glDepthMask GL_TRUE
   glDisable GL_BLEND
+  glBindTexture GL_TEXTURE_2D 0
   glDisableVertexAttribArray 0
   glBindVertexArray 0
