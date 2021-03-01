@@ -55,7 +55,7 @@ fragmentShaderSrc = BS.pack
   |]
 
 gravity :: GLfloat
-gravity = 50
+gravity = -50
 
 update :: GLfloat -> Particle -> Particle
 update elapsed p = p
@@ -115,7 +115,7 @@ setModelView p particle view =
  where modelView = modelViewMatrix particle view
 
 modelViewMatrix :: Particle -> M44 GLfloat -> M44 GLfloat
-modelViewMatrix p view = view * model''
+modelViewMatrix p view = view !*! model''
  where
   rot = fromQuaternion $ axisAngle (V3 0 0 1) (particleRotation p)
   scale = V3 (particleScale p) (particleScale p) (particleScale p)
@@ -123,7 +123,7 @@ modelViewMatrix p view = view * model''
   -- Set model rotation matrix to transpose of view matrix to "cancel" it out.
   model' = model & _m33 .~ transpose (view ^. _m33)
   -- Apply particle rotation and scale.
-  model'' = model' & _m33 %~ ((^* scale) . (rot *))
+  model'' = model' & _m33 %~ ((^* scale) . (rot !*!))
 
 draw :: RawModel -> IO ()
 draw = glDrawArrays GL_TRIANGLE_STRIP 0 . modelVertexCount

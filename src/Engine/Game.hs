@@ -249,7 +249,7 @@ updateParticles elapsed g = do
   speed = 25
   gravityEffect = 0.3
   lifeLength = 4
-  center = Linear.V3 10 0 10
+  center = Linear.V3 20 0 20
 
   particlesToCreate = elapsed * pps
   count = floor particlesToCreate :: Int
