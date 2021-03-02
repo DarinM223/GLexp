@@ -60,7 +60,7 @@ data Game = Game
   , gameWaterProgram    :: {-# UNPACK #-} !Water.Program
   , gameWater           :: {-# UNPACK #-} !Water.Water
   , gameWaterBuffers    :: {-# UNPACK #-} !FrameBuffers.FrameBuffers
-  , gameParticleModel   :: {-# UNPACK #-} !Particle.Particles
+  , gameParticleData    :: {-# UNPACK #-} !Particle.Particles
   , gameParticles       :: {-# UNPACK #-} !(FixedArray.Array Particle)
   , gameParticleProgram :: {-# UNPACK #-} !Particle.Program
   , gameSkyColor        :: {-# UNPACK #-} !(Linear.V3 GLfloat)
@@ -187,7 +187,7 @@ init w h = do
     <*> Water.mkProgram maxLights
     <*> Water.mkWater
     <*> FrameBuffers.init (fromIntegral w) (fromIntegral h)
-    <*> Particle.mkParticles "res/particleStar.png"
+    <*> Particle.mkParticles "res/particleAtlas.png" 4
     <*> FixedArray.new 1000
     <*> Particle.mkProgram
     <*> pure (Linear.V3 0.5 0.5 0.5)
@@ -244,11 +244,12 @@ updateParticles elapsed g = do
   return g { gameParticles = addedPartial, gameStdGen = stdGen'' }
  where
   ps0 = gameParticles g
+  tex = Particle.particlesTexture $ gameParticleData g
 
   pps = 50
   speed = 25
   gravityEffect = 0.3
-  lifeLength = 4
+  lifeLength = 1
   center = Linear.V3 20 0 20
 
   particlesToCreate = elapsed * pps
@@ -264,10 +265,11 @@ updateParticles elapsed g = do
 
     v = Linear.normalize (Linear.V3 dirX 1 dirZ) Linear.^* speed
     p = Particle center v gravityEffect lifeLength 0 1 0
+      (Linear.V2 0 0) (Linear.V2 0 0) 0
   updateParticle ps i p
     | Particle.alive p' = ps <$ FixedArray.write ps i p'
     | otherwise         = FixedArray.delete ps i
-   where p' = Particle.update elapsed p
+   where p' = Particle.update elapsed tex p
 
 updateProjectiles :: GLfloat -> Game -> Vec.UpdateM Game
 updateProjectiles elapsed g
@@ -344,11 +346,12 @@ draw g = do
     Water.drawTile (gameWater g) tile (gameWaterProgram g)
   Water.unbind
 
-  Particle.prepare (gameParticleProgram g) (gameParticleModel g)
+  Particle.prepare (gameParticleProgram g) (gameParticleData g)
   Particle.setProj (gameParticleProgram g) (gameProj g)
   FixedArray.forM_ (gameParticles g) $ \_ p -> do
+    Particle.setTexCoordInfo (gameParticleProgram g) (gameParticleData g) p
     Particle.setModelView (gameParticleProgram g) p view
-    Particle.draw $ gameParticleModel g
+    Particle.draw $ gameParticleData g
   Particle.unbind
 
 drawScene :: Game -> Linear.M44 GLfloat -> Linear.V4 GLfloat -> IO ()

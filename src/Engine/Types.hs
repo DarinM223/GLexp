@@ -165,6 +165,9 @@ data Particle = Particle
   , particleRotation      :: {-# UNPACK #-} !GLfloat
   , particleScale         :: {-# UNPACK #-} !GLfloat
   , particleElapsed       :: {-# UNPACK #-} !GLfloat
+  , particleTexOffset1    :: {-# UNPACK #-} !(Linear.V2 GLfloat)
+  , particleTexOffset2    :: {-# UNPACK #-} !(Linear.V2 GLfloat)
+  , particleBlend         :: {-# UNPACK #-} !GLfloat
   } deriving Show
 $(deriveStorable ''Particle)
 
