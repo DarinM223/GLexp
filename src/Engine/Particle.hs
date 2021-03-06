@@ -3,15 +3,15 @@
 module Engine.Particle
   ( Program
   , Particles (..)
+  , instanceDataLength
   , gravity
   , update
   , alive
   , mkParticles
   , mkProgram
   , prepare
-  , setProj
-  , setTexCoordInfo
-  , setModelView
+  , setUniforms
+  , fillBuffer
   , draw
   , unbind
   ) where
@@ -19,16 +19,19 @@ module Engine.Particle
 import Control.Exception (bracket)
 import Control.Lens ((%~), (&), (^.), (.~))
 import Data.Fixed (mod')
+import Data.Foldable (foldlM)
 import Foreign.C.String (withCString)
 import Foreign.Marshal.Utils (with)
 import Foreign.Ptr (castPtr)
 import Graphics.GL.Core45
 import Graphics.GL.Types
 import Engine.Types
-import Engine.Utils (linkShaders, loadShader, loadTexture, loadVAO)
+import Engine.Utils
+  (linkShaders, loadInstancedVBO, loadShader, loadTexture, loadVAO, updateVBO)
 import Linear ((!*!), (^+^), (^*), _m33, _y)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Vector.Storable as V
+import qualified Data.Vector.Storable.Mutable as VM
 import qualified Linear
 import qualified Text.RawString.QQ as QQ
 
@@ -38,24 +41,24 @@ vertexShaderSrc = BS.pack
     #version 330 core
 
     in vec2 position;
+    in mat4 modelView;
+    in vec4 texOffsets;
+    in float blendFactor;
+
     out vec2 texCoord1;
     out vec2 texCoord2;
     out float blend;
 
     uniform mat4 projection;
-    uniform mat4 modelView;
-
-    uniform vec2 texOffset1;
-    uniform vec2 texOffset2;
-    uniform vec2 texCoordInfo;
+    uniform float numberOfRows;
 
     void main() {
       vec2 texCoord = position + vec2(0.5, 0.5);
       texCoord.y = 1.0 - texCoord.y;
-      texCoord /= texCoordInfo.x;
-      texCoord1 = texCoord + texOffset1;
-      texCoord2 = texCoord + texOffset2;
-      blend = texCoordInfo.y;
+      texCoord /= numberOfRows;
+      texCoord1 = texCoord + texOffsets.xy;
+      texCoord2 = texCoord + texOffsets.zw;
+      blend = blendFactor;
 
       gl_Position = projection * modelView * vec4(position, 0.0, 1.0);
     }
@@ -118,23 +121,33 @@ alive p = particleElapsed p < particleLife p
 vertices :: V.Vector GLfloat
 vertices = V.fromList [-0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5, -0.5]
 
+maxInstances :: Int
+maxInstances = 10000
+
+instanceDataLength :: GLsizei
+instanceDataLength = 21
+
 data Particles = Particles
   { particlesModel   :: {-# UNPACK #-} !RawModel
+  , particlesVBO     :: {-# UNPACK #-} !GLuint
   , particlesTexture :: {-# UNPACK #-} !Texture
+  , particlesBuffer  :: {-# UNPACK #-} !(VM.IOVector GLfloat)
   }
 
 mkParticles :: FilePath -> Int -> IO Particles
-mkParticles path numRows = Particles
-  <$> loadVAO vertices 2
-  <*> ((\t -> t { textureNumRows = numRows }) <$> loadTexture path)
+mkParticles path numRows = do
+  texture <- (\t -> t { textureNumRows = numRows }) <$> loadTexture path
+  rawModel <- loadVAO vertices 2
+  glBindVertexArray $ modelVao rawModel
+  vbo <- loadInstancedVBO instanceDataLength maxInstances
+  glBindVertexArray 0
+  buf <- VM.new $ fromIntegral instanceDataLength * fromIntegral maxInstances
+  return $ Particles rawModel vbo texture buf
 
 data Program = Program
   { program         :: {-# UNPACK #-} !GLuint
-  , viewLoc         :: {-# UNPACK #-} !GLint
   , projLoc         :: {-# UNPACK #-} !GLint
-  , texOffset1Loc   :: {-# UNPACK #-} !GLint
-  , texOffset2Loc   :: {-# UNPACK #-} !GLint
-  , texCoordInfoLoc :: {-# UNPACK #-} !GLint
+  , numRowsLoc      :: {-# UNPACK #-} !GLint
   }
 
 mkProgram :: IO Program
@@ -142,50 +155,37 @@ mkProgram = do
   program <-
     bracket loadVertexShader glDeleteShader $ \vertexShader ->
     bracket loadFragmentShader glDeleteShader $ \fragmentShader ->
-      linkShaders [vertexShader, fragmentShader]
+      linkShaders [vertexShader, fragmentShader] bindAttributes
 
-  viewLoc <- withCString "modelView" $ glGetUniformLocation program
   projLoc <- withCString "projection" $ glGetUniformLocation program
-  texOffset1Loc <- withCString "texOffset1" $ glGetUniformLocation program
-  texOffset2Loc <- withCString "texOffset2" $ glGetUniformLocation program
-  texCoordInfoLoc <- withCString "texCoordInfo" $ glGetUniformLocation program
+  numRowsLoc <- withCString "numberOfRows" $ glGetUniformLocation program
   return Program{..}
  where
   loadVertexShader = loadShader GL_VERTEX_SHADER vertexShaderSrc
   loadFragmentShader = loadShader GL_FRAGMENT_SHADER fragmentShaderSrc
+  bindAttributes program = do
+    withCString "position" $ glBindAttribLocation program 0
+    withCString "modelView" $ glBindAttribLocation program 1
+    withCString "texOffsets" $ glBindAttribLocation program 5
+    withCString "blendFactor" $ glBindAttribLocation program 6
 
 prepare :: Program -> Particles -> IO ()
 prepare p particles = do
   glUseProgram $ program p
   glBindVertexArray $ modelVao $ particlesModel particles
-  glEnableVertexAttribArray 0
   glActiveTexture GL_TEXTURE0
   glBindTexture GL_TEXTURE_2D $ textureID $ particlesTexture particles
   glEnable GL_BLEND
   glBlendFunc GL_SRC_ALPHA GL_ONE
   glDepthMask GL_FALSE
 
-setProj :: Program -> Linear.M44 GLfloat -> IO ()
-setProj p proj =
+setUniforms :: Program -> Linear.M44 GLfloat -> GLfloat -> IO ()
+setUniforms p proj numRows = do
+  glUniform1f (numRowsLoc p) numRows
   with proj $ glUniformMatrix4fv (projLoc p) 1 GL_TRUE . castPtr
 
-setTexCoordInfo :: Program -> Particles -> Particle -> IO ()
-setTexCoordInfo p
-    Particles { particlesTexture = Texture { textureNumRows = numRows } }
-    Particle { particleTexOffset1 = Linear.V2 to1x to1y
-             , particleTexOffset2 = Linear.V2 to2x to2y
-             , particleBlend = blend } = do
-  glUniform2f (texOffset1Loc p) to1x to1y
-  glUniform2f (texOffset2Loc p) to2x to2y
-  glUniform2f (texCoordInfoLoc p) (fromIntegral numRows) blend
-
-setModelView :: Program -> Particle -> Linear.M44 GLfloat -> IO ()
-setModelView p particle view =
-  with modelView $ glUniformMatrix4fv (viewLoc p) 1 GL_TRUE . castPtr
- where modelView = modelViewMatrix particle view
-
 modelViewMatrix :: Particle -> Linear.M44 GLfloat -> Linear.M44 GLfloat
-modelViewMatrix p view = view Linear.!*! model''
+modelViewMatrix p view = view !*! model''
  where
   rot = Linear.fromQuaternion $
     Linear.axisAngle (Linear.V3 0 0 1) (particleRotation p)
@@ -196,13 +196,40 @@ modelViewMatrix p view = view Linear.!*! model''
   -- Apply particle rotation and scale.
   model'' = model' & _m33 %~ ((^* scale) . (!*! rot))
 
-draw :: Particles -> IO ()
-draw = glDrawArrays GL_TRIANGLE_STRIP 0 . modelVertexCount . particlesModel
+fillBuffer
+  :: Particles -> Particle -> Linear.M44 GLfloat -> Int -> IO Int
+fillBuffer p particle view size0 = do
+  size <- foldlM fillRow size0 modelView
+  size' <- fillOffset size (particleTexOffset1 particle)
+  size'' <- fillOffset size' (particleTexOffset2 particle)
+  VM.write (particlesBuffer p) size'' (particleBlend particle)
+  return $ size'' + 1
+ where
+  modelView = Linear.transpose $ modelViewMatrix particle view
+
+  fillRow :: Int -> Linear.V4 GLfloat -> IO Int
+  fillRow size (Linear.V4 x y z w) = do
+    VM.write (particlesBuffer p) size x
+    VM.write (particlesBuffer p) (size + 1) y
+    VM.write (particlesBuffer p) (size + 2) z
+    VM.write (particlesBuffer p) (size + 3) w
+    return $ size + 4
+
+  fillOffset :: Int -> Linear.V2 GLfloat -> IO Int
+  fillOffset size (Linear.V2 x y) = do
+    VM.write (particlesBuffer p) size x
+    VM.write (particlesBuffer p) (size + 1) y
+    return $ size + 2
+
+draw :: Particles -> GLsizei -> IO ()
+draw p size = do
+  updateVBO (particlesVBO p) (particlesBuffer p)
+  glDrawArraysInstanced
+    GL_TRIANGLE_STRIP 0 (modelVertexCount (particlesModel p)) size
 
 unbind :: IO ()
 unbind = do
   glDepthMask GL_TRUE
   glDisable GL_BLEND
   glBindTexture GL_TEXTURE_2D 0
-  glDisableVertexAttribArray 0
   glBindVertexArray 0

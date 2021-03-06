@@ -347,12 +347,16 @@ draw g = do
   Water.unbind
 
   Particle.prepare (gameParticleProgram g) (gameParticleData g)
-  Particle.setProj (gameParticleProgram g) (gameProj g)
-  FixedArray.forM_ (gameParticles g) $ \_ p -> do
-    Particle.setTexCoordInfo (gameParticleProgram g) (gameParticleData g) p
-    Particle.setModelView (gameParticleProgram g) p view
-    Particle.draw $ gameParticleData g
+  Particle.setUniforms (gameParticleProgram g) (gameProj g) $ fromIntegral $
+    textureNumRows $ Particle.particlesTexture $ gameParticleData g
+  size <- FixedArray.foldlM (buildBuffer view) 0 (gameParticles g)
+  Particle.draw
+    (gameParticleData g)
+    (fromIntegral size `quot` Particle.instanceDataLength)
   Particle.unbind
+ where
+  buildBuffer view size _ p =
+    Particle.fillBuffer (gameParticleData g) p view size
 
 drawScene :: Game -> Linear.M44 GLfloat -> Linear.V4 GLfloat -> IO ()
 drawScene g view clipPlane = do

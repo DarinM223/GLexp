@@ -185,7 +185,7 @@ mkProgram :: IO Program
 mkProgram =
   bracket loadVertexShader glDeleteShader $ \vertexShader ->
   bracket loadFragmentShader glDeleteShader $ \fragmentShader -> do
-    program <- linkShaders [vertexShader, fragmentShader]
+    program <- linkShaders [vertexShader, fragmentShader] (const (pure ()))
     viewLoc <- withCString "view" $ glGetUniformLocation program
     projLoc <- withCString "projection" $ glGetUniformLocation program
     skyColorLoc <- withCString "skyColor" $ glGetUniformLocation program
