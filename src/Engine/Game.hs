@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE TupleSections #-}
 module Engine.Game
   ( init
   , update
@@ -9,6 +10,7 @@ import Prelude hiding (init)
 import Control.Lens ((^.), (&), (%~))
 import Control.Monad ((>=>))
 import Data.Bits ((.|.))
+import Data.Fixed (mod')
 import Data.Foldable (foldlM, for_)
 import Engine.MousePicker (calculateMouseRay)
 import Engine.Types
@@ -17,9 +19,11 @@ import Engine.Utils
 import Graphics.GL.Core45
 import Graphics.GL.Types
 import Linear ((!!*))
+import System.Random (Random(random), StdGen, mkStdGen)
 import qualified Data.Set as S
 import qualified Data.Vector.Storable as V
 import qualified Engine.FixedArray as FixedArray
+import qualified Engine.Particle as Particle
 import qualified Engine.Skybox as Skybox
 import qualified Engine.Terrain.Terrain as Terrain
 import qualified Engine.TexturedModel as TexModel
@@ -33,29 +37,33 @@ maxLights :: Int
 maxLights = 4
 
 data Game = Game
-  { gameWidth          :: {-# UNPACK #-} !GLfloat
-  , gameHeight         :: {-# UNPACK #-} !GLfloat
-  , gameEntities       :: {-# UNPACK #-} !(Vec.Vec Entity)
-  , gameGrasses        :: {-# UNPACK #-} !(Vec.Vec Entity)
-  , gameFerns          :: {-# UNPACK #-} !(Vec.Vec Entity)
-  , gameLamps          :: {-# UNPACK #-} !(Vec.Vec Entity)
-  , gameWaterTiles     :: {-# UNPACK #-} !(Vec.Vec WaterTile)
-  , gameProgram        :: {-# UNPACK #-} !TexModel.Program
-  , gameCamera         :: {-# UNPACK #-} !Camera
-  , gameProj           :: {-# UNPACK #-} !(Linear.M44 GLfloat)
-  , gameLights         :: {-# UNPACK #-} !(V.Vector Light)
-  , gameProjectiles    :: {-# UNPACK #-} !(FixedArray.Array Projectile)
-  , gameTexture        :: {-# UNPACK #-} !Texture
-  , gameRawModel       :: {-# UNPACK #-} !RawModel
-  , gameTerrainProgram :: {-# UNPACK #-} !Terrain.Program
-  , gameTerrain1       :: {-# UNPACK #-} !Terrain.Terrain
-  , gameTerrain2       :: {-# UNPACK #-} !Terrain.Terrain
-  , gameSkyboxProgram  :: {-# UNPACK #-} !Skybox.Program
-  , gameSkybox         :: {-# UNPACK #-} !Skybox.Skybox
-  , gameWaterProgram   :: {-# UNPACK #-} !Water.Program
-  , gameWater          :: {-# UNPACK #-} !Water.Water
-  , gameWaterBuffers   :: {-# UNPACK #-} !FrameBuffers.FrameBuffers
-  , gameSkyColor       :: {-# UNPACK #-} !(Linear.V3 GLfloat)
+  { gameWidth           :: {-# UNPACK #-} !GLfloat
+  , gameHeight          :: {-# UNPACK #-} !GLfloat
+  , gameStdGen          :: {-# UNPACK #-} !StdGen
+  , gameEntities        :: {-# UNPACK #-} !(Vec.Vec Entity)
+  , gameGrasses         :: {-# UNPACK #-} !(Vec.Vec Entity)
+  , gameFerns           :: {-# UNPACK #-} !(Vec.Vec Entity)
+  , gameLamps           :: {-# UNPACK #-} !(Vec.Vec Entity)
+  , gameWaterTiles      :: {-# UNPACK #-} !(Vec.Vec WaterTile)
+  , gameProgram         :: {-# UNPACK #-} !TexModel.Program
+  , gameCamera          :: {-# UNPACK #-} !Camera
+  , gameProj            :: {-# UNPACK #-} !(Linear.M44 GLfloat)
+  , gameLights          :: {-# UNPACK #-} !(V.Vector Light)
+  , gameProjectiles     :: {-# UNPACK #-} !(FixedArray.Array Projectile)
+  , gameTexture         :: {-# UNPACK #-} !Texture
+  , gameRawModel        :: {-# UNPACK #-} !RawModel
+  , gameTerrainProgram  :: {-# UNPACK #-} !Terrain.Program
+  , gameTerrain1        :: {-# UNPACK #-} !Terrain.Terrain
+  , gameTerrain2        :: {-# UNPACK #-} !Terrain.Terrain
+  , gameSkyboxProgram   :: {-# UNPACK #-} !Skybox.Program
+  , gameSkybox          :: {-# UNPACK #-} !Skybox.Skybox
+  , gameWaterProgram    :: {-# UNPACK #-} !Water.Program
+  , gameWater           :: {-# UNPACK #-} !Water.Water
+  , gameWaterBuffers    :: {-# UNPACK #-} !FrameBuffers.FrameBuffers
+  , gameParticleData    :: {-# UNPACK #-} !Particle.Particles
+  , gameParticles       :: {-# UNPACK #-} !(FixedArray.Array Particle)
+  , gameParticleProgram :: {-# UNPACK #-} !Particle.Program
+  , gameSkyColor        :: {-# UNPACK #-} !(Linear.V3 GLfloat)
   }
 
 init :: Int -> Int -> IO Game
@@ -151,7 +159,7 @@ init w h = do
   pack <- loadTexturePack
     "res/grass.png" "res/mud.png" "res/grassFlowers.png" "res/path.png"
   blendMap <- loadTexture "res/blendMap.png"
-  Game (fromIntegral w) (fromIntegral h)
+  Game (fromIntegral w) (fromIntegral h) (mkStdGen 2)
     <$> Vec.fromList initEntities
     <*> Vec.fromList grassEntities
     <*> Vec.fromList fernEntities
@@ -179,6 +187,9 @@ init w h = do
     <*> Water.mkProgram maxLights
     <*> Water.mkWater
     <*> FrameBuffers.init (fromIntegral w) (fromIntegral h)
+    <*> Particle.mkParticles "res/particleAtlas.png" 4
+    <*> FixedArray.new 1000
+    <*> Particle.mkProgram
     <*> pure (Linear.V3 0.5 0.5 0.5)
  where
   camera = Camera (Linear.V3 10 2 30) (Linear.V3 0 0 (-1)) (Linear.V3 0 1 0) 0 0
@@ -195,7 +206,7 @@ init w h = do
 update :: S.Set GLFW.Key -> MouseInfo -> GLfloat -> Game -> Vec.UpdateM Game
 update keys mouseInfo dt g0 =
   foldlM update' g0' [0..Vec.length (gameEntities g0') - 1] >>=
-    (handleLeftClick mouseInfo >=> updateProjectiles dt)
+    (handleLeftClick mouseInfo >=> updateProjectiles dt >=> updateParticles dt)
  where
   (pitch, yaw) = mouseOldPitchYaw mouseInfo
   camera' = (gameCamera g0)
@@ -220,6 +231,45 @@ update keys mouseInfo dt g0 =
         { entityRot = entityRot e * Linear.axisAngle (Linear.V3 0 1 0) 0.01 }
     Vec.modify (gameEntities g) updateEntity i
     return g
+
+updateParticles :: GLfloat -> Game -> Vec.UpdateM Game
+updateParticles elapsed g = do
+  ps <- FixedArray.foldlM updateParticle ps0 ps0
+  (addedWhole, stdGen) <- foldlM
+    (\t _ -> emitParticle t) (ps, gameStdGen g) [0..count - 1]
+  let (r, stdGen') = random stdGen
+  (addedPartial, stdGen'') <- if r < partialParticle
+    then emitParticle (addedWhole, stdGen')
+    else pure (addedWhole, stdGen')
+  return g { gameParticles = addedPartial, gameStdGen = stdGen'' }
+ where
+  ps0 = gameParticles g
+  tex = Particle.particlesTexture $ gameParticleData g
+
+  pps = 50
+  speed = 25
+  gravityEffect = 0.3
+  lifeLength = 1
+  center = Linear.V3 20 0 20
+
+  particlesToCreate = elapsed * pps
+  count = floor particlesToCreate :: Int
+  partialParticle = particlesToCreate `mod'` 1
+
+  emitParticle (!ps, !stdGen) = (, stdGen'') <$> FixedArray.add ps p
+   where
+    (xrand, stdGen') = random stdGen
+    (zrand, stdGen'') = random stdGen'
+    dirX = xrand * 2 - 1
+    dirZ = zrand * 2 - 1
+
+    v = Linear.normalize (Linear.V3 dirX 1 dirZ) Linear.^* speed
+    p = Particle center v gravityEffect lifeLength 0 1 0
+      (Linear.V2 0 0) (Linear.V2 0 0) 0
+  updateParticle ps i p
+    | Particle.alive p' = ps <$ FixedArray.write ps i p'
+    | otherwise         = FixedArray.delete ps i
+   where p' = Particle.update elapsed tex p
 
 updateProjectiles :: GLfloat -> Game -> Vec.UpdateM Game
 updateProjectiles elapsed g
@@ -265,6 +315,10 @@ draw g = do
   let view = toViewMatrix $ gameCamera g
   waterTile <- Vec.read (gameWaterTiles g) 0
 
+  bufSize <- fromIntegral
+         <$> FixedArray.foldlM (buildBuffer view) 0 (gameParticles g)
+  Particle.updateVBO $ gameParticleData g
+
   glEnable GL_CLIP_DISTANCE0
   FrameBuffers.bindReflectionFrameBuffer $ gameWaterBuffers g
   let
@@ -273,14 +327,14 @@ draw g = do
                                           & Linear._y %~ subtract distance
                               }
     view' = toViewMatrix $ invertPitch camera'
-  drawScene g view' (Linear.V4 0 1 0 (-tileHeight waterTile + 1))
+  drawScene g view' (Linear.V4 0 1 0 (-tileHeight waterTile + 1)) bufSize
 
   FrameBuffers.bindRefractionFrameBuffer $ gameWaterBuffers g
-  drawScene g view (Linear.V4 0 (-1) 0 (tileHeight waterTile + 1))
+  drawScene g view (Linear.V4 0 (-1) 0 (tileHeight waterTile + 1)) bufSize
   glDisable GL_CLIP_DISTANCE0
 
   FrameBuffers.unbindFrameBuffer $ gameWaterBuffers g
-  drawScene g view (Linear.V4 0 0 0 0)
+  drawScene g view (Linear.V4 0 0 0 0) bufSize
 
   Water.use $ gameWaterProgram g
   Water.setUniforms
@@ -295,9 +349,12 @@ draw g = do
     tile <- Vec.read (gameWaterTiles g) i
     Water.drawTile (gameWater g) tile (gameWaterProgram g)
   Water.unbind
+ where
+  buildBuffer view size _ p =
+    Particle.fillBuffer (gameParticleData g) p view size
 
-drawScene :: Game -> Linear.M44 GLfloat -> Linear.V4 GLfloat -> IO ()
-drawScene g view clipPlane = do
+drawScene :: Game -> Linear.M44 GLfloat -> Linear.V4 GLfloat -> GLsizei -> IO ()
+drawScene g view clipPlane particleBufSize = do
   case gameSkyColor g of
     Linear.V3 red green blue -> do
       glClearColor red green blue 1.0
@@ -356,6 +413,12 @@ drawScene g view clipPlane = do
     (gameSkyColor g)
   Skybox.draw $ gameSkybox g
   glDepthFunc GL_LESS
+
+  Particle.prepare (gameParticleProgram g) (gameParticleData g)
+  Particle.setUniforms (gameParticleProgram g) (gameProj g) $ fromIntegral $
+    textureNumRows $ Particle.particlesTexture $ gameParticleData g
+  Particle.draw (gameParticleData g) particleBufSize
+  Particle.unbind
 
 drawEntities :: TexModel.Program -> Vec.Vec Entity -> IO ()
 drawEntities p v = do

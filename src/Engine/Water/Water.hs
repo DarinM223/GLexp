@@ -167,7 +167,7 @@ mkProgram maxLights = do
   program <-
     bracket loadVertexShader glDeleteShader $ \vertexShader ->
     bracket loadFragmentShader glDeleteShader $ \fragmentShader ->
-      linkShaders [vertexShader, fragmentShader]
+      linkShaders [vertexShader, fragmentShader] (const (pure ()))
   modelLoc <- withCString "model" $ glGetUniformLocation program
   viewLoc <- withCString "view" $ glGetUniformLocation program
   projLoc <- withCString "projection" $ glGetUniformLocation program

@@ -33,6 +33,7 @@ library
                      , Engine.FixedArray
                      , Engine.Game
                      , Engine.MousePicker
+                     , Engine.Particle
                      , Engine.Skybox
                      , Engine.Terrain.Terrain
                      , Engine.TexturedModel
@@ -55,6 +56,7 @@ library
                      , lens
                      , linear
                      , primitive
+                     , random
                      , raw-strings-qq
                      , streamly
                      , streamly-bytestring

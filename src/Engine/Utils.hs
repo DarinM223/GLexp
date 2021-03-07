@@ -8,6 +8,8 @@ module Engine.Utils
   , loadTexturePack
   , loadFont
   , linkShaders
+  , loadInstancedVBO
+  , updateVBO
   , loadVAO
   , loadVAOWithIndices
   , loadObj
@@ -50,6 +52,47 @@ perspectiveMat width height =
   aspectRatio = fromIntegral width / fromIntegral height
   nearPlane = 0.1
   farPlane = 1000
+
+loadInstancedVBO :: GLsizei -> Int -> IO GLuint
+loadInstancedVBO instancedDataLen maxInstances = do
+  vbo <- alloca $ \ptr -> glGenBuffers 1 ptr >> peek ptr
+  glBindBuffer GL_ARRAY_BUFFER vbo
+  glBufferData GL_ARRAY_BUFFER vSize nullPtr GL_STREAM_DRAW
+
+  glVertexAttribPointer 1 4 GL_FLOAT GL_FALSE stride (offset 0)
+  glVertexAttribDivisor 1 1
+  glEnableVertexAttribArray 1
+  glVertexAttribPointer 2 4 GL_FLOAT GL_FALSE stride (offset 4)
+  glVertexAttribDivisor 2 1
+  glEnableVertexAttribArray 2
+  glVertexAttribPointer 3 4 GL_FLOAT GL_FALSE stride (offset 8)
+  glVertexAttribDivisor 3 1
+  glEnableVertexAttribArray 3
+  glVertexAttribPointer 4 4 GL_FLOAT GL_FALSE stride (offset 12)
+  glVertexAttribDivisor 4 1
+  glEnableVertexAttribArray 4
+  glVertexAttribPointer 5 4 GL_FLOAT GL_FALSE stride (offset 16)
+  glVertexAttribDivisor 5 1
+  glEnableVertexAttribArray 5
+  glVertexAttribPointer 6 1 GL_FLOAT GL_FALSE stride (offset 20)
+  glVertexAttribDivisor 6 1
+  glEnableVertexAttribArray 6
+
+  glBindBuffer GL_ARRAY_BUFFER 0
+  return vbo
+ where
+  vSize = fromIntegral stride * fromIntegral maxInstances
+  stride = instancedDataLen * fromIntegral (sizeOf (undefined :: GLfloat))
+  offset o = nullPtr `plusPtr`
+    (o * fromIntegral (sizeOf (undefined :: GLfloat)))
+
+updateVBO :: GLuint -> VM.IOVector GLfloat -> IO ()
+updateVBO vbo v = VM.unsafeWith v $ \vPtr -> do
+  glBindBuffer GL_ARRAY_BUFFER vbo
+  glBufferData GL_ARRAY_BUFFER vSize (castPtr vPtr) GL_STREAM_DRAW
+  glBufferSubData GL_ARRAY_BUFFER 0 vSize (castPtr vPtr)
+  glBindBuffer GL_ARRAY_BUFFER 0
+ where vSize = fromIntegral $ sizeOf (undefined :: GLfloat) * VM.length v
 
 loadVAO :: V.Vector GLfloat -> Int -> IO RawModel
 loadVAO v n = V.unsafeWith v $ \vPtr -> do
@@ -299,10 +342,11 @@ loadShader shaderType bs = do
       throwIO $ ShaderException $ fmap (toEnum . fromEnum) logBytes
   return shader
 
-linkShaders :: [GLuint] -> IO GLuint
-linkShaders shaders = do
+linkShaders :: [GLuint] -> (GLuint -> IO ()) -> IO GLuint
+linkShaders shaders bindAttributes = do
   program <- glCreateProgram
   traverse_ (glAttachShader program) shaders
+  bindAttributes program
   glLinkProgram program
   linkSuccess <- alloca $ \linkSuccessPtr -> do
     glGetProgramiv program GL_LINK_STATUS linkSuccessPtr
