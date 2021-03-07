@@ -315,6 +315,10 @@ draw g = do
   let view = toViewMatrix $ gameCamera g
   waterTile <- Vec.read (gameWaterTiles g) 0
 
+  bufSize <- fromIntegral
+         <$> FixedArray.foldlM (buildBuffer view) 0 (gameParticles g)
+  Particle.updateVBO $ gameParticleData g
+
   glEnable GL_CLIP_DISTANCE0
   FrameBuffers.bindReflectionFrameBuffer $ gameWaterBuffers g
   let
@@ -323,14 +327,14 @@ draw g = do
                                           & Linear._y %~ subtract distance
                               }
     view' = toViewMatrix $ invertPitch camera'
-  drawScene g view' (Linear.V4 0 1 0 (-tileHeight waterTile + 1))
+  drawScene g view' (Linear.V4 0 1 0 (-tileHeight waterTile + 1)) bufSize
 
   FrameBuffers.bindRefractionFrameBuffer $ gameWaterBuffers g
-  drawScene g view (Linear.V4 0 (-1) 0 (tileHeight waterTile + 1))
+  drawScene g view (Linear.V4 0 (-1) 0 (tileHeight waterTile + 1)) bufSize
   glDisable GL_CLIP_DISTANCE0
 
   FrameBuffers.unbindFrameBuffer $ gameWaterBuffers g
-  drawScene g view (Linear.V4 0 0 0 0)
+  drawScene g view (Linear.V4 0 0 0 0) bufSize
 
   Water.use $ gameWaterProgram g
   Water.setUniforms
@@ -345,21 +349,12 @@ draw g = do
     tile <- Vec.read (gameWaterTiles g) i
     Water.drawTile (gameWater g) tile (gameWaterProgram g)
   Water.unbind
-
-  Particle.prepare (gameParticleProgram g) (gameParticleData g)
-  Particle.setUniforms (gameParticleProgram g) (gameProj g) $ fromIntegral $
-    textureNumRows $ Particle.particlesTexture $ gameParticleData g
-  size <- FixedArray.foldlM (buildBuffer view) 0 (gameParticles g)
-  Particle.draw
-    (gameParticleData g)
-    (fromIntegral size `quot` Particle.instanceDataLength)
-  Particle.unbind
  where
   buildBuffer view size _ p =
     Particle.fillBuffer (gameParticleData g) p view size
 
-drawScene :: Game -> Linear.M44 GLfloat -> Linear.V4 GLfloat -> IO ()
-drawScene g view clipPlane = do
+drawScene :: Game -> Linear.M44 GLfloat -> Linear.V4 GLfloat -> GLsizei -> IO ()
+drawScene g view clipPlane particleBufSize = do
   case gameSkyColor g of
     Linear.V3 red green blue -> do
       glClearColor red green blue 1.0
@@ -418,6 +413,12 @@ drawScene g view clipPlane = do
     (gameSkyColor g)
   Skybox.draw $ gameSkybox g
   glDepthFunc GL_LESS
+
+  Particle.prepare (gameParticleProgram g) (gameParticleData g)
+  Particle.setUniforms (gameParticleProgram g) (gameProj g) $ fromIntegral $
+    textureNumRows $ Particle.particlesTexture $ gameParticleData g
+  Particle.draw (gameParticleData g) particleBufSize
+  Particle.unbind
 
 drawEntities :: TexModel.Program -> Vec.Vec Entity -> IO ()
 drawEntities p v = do

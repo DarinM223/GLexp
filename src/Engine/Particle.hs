@@ -2,8 +2,7 @@
 {-# LANGUAGE RecordWildCards #-}
 module Engine.Particle
   ( Program
-  , Particles (..)
-  , instanceDataLength
+  , Particles (particlesTexture)
   , gravity
   , update
   , alive
@@ -12,6 +11,7 @@ module Engine.Particle
   , prepare
   , setUniforms
   , fillBuffer
+  , updateVBO
   , draw
   , unbind
   ) where
@@ -26,12 +26,11 @@ import Foreign.Ptr (castPtr)
 import Graphics.GL.Core45
 import Graphics.GL.Types
 import Engine.Types
-import Engine.Utils
-  (linkShaders, loadInstancedVBO, loadShader, loadTexture, loadVAO, updateVBO)
 import Linear ((!*!), (^+^), (^*), _m33, _y)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Vector.Storable as V
 import qualified Data.Vector.Storable.Mutable as VM
+import qualified Engine.Utils as Utils
 import qualified Linear
 import qualified Text.RawString.QQ as QQ
 
@@ -136,10 +135,10 @@ data Particles = Particles
 
 mkParticles :: FilePath -> Int -> IO Particles
 mkParticles path numRows = do
-  texture <- (\t -> t { textureNumRows = numRows }) <$> loadTexture path
-  rawModel <- loadVAO vertices 2
+  texture <- (\t -> t { textureNumRows = numRows }) <$> Utils.loadTexture path
+  rawModel <- Utils.loadVAO vertices 2
   glBindVertexArray $ modelVao rawModel
-  vbo <- loadInstancedVBO instanceDataLength maxInstances
+  vbo <- Utils.loadInstancedVBO instanceDataLength maxInstances
   glBindVertexArray 0
   buf <- VM.new $ fromIntegral instanceDataLength * fromIntegral maxInstances
   return $ Particles rawModel vbo texture buf
@@ -155,14 +154,14 @@ mkProgram = do
   program <-
     bracket loadVertexShader glDeleteShader $ \vertexShader ->
     bracket loadFragmentShader glDeleteShader $ \fragmentShader ->
-      linkShaders [vertexShader, fragmentShader] bindAttributes
+      Utils.linkShaders [vertexShader, fragmentShader] bindAttributes
 
   projLoc <- withCString "projection" $ glGetUniformLocation program
   numRowsLoc <- withCString "numberOfRows" $ glGetUniformLocation program
   return Program{..}
  where
-  loadVertexShader = loadShader GL_VERTEX_SHADER vertexShaderSrc
-  loadFragmentShader = loadShader GL_FRAGMENT_SHADER fragmentShaderSrc
+  loadVertexShader = Utils.loadShader GL_VERTEX_SHADER vertexShaderSrc
+  loadFragmentShader = Utils.loadShader GL_FRAGMENT_SHADER fragmentShaderSrc
   bindAttributes program = do
     withCString "position" $ glBindAttribLocation program 0
     withCString "modelView" $ glBindAttribLocation program 1
@@ -221,11 +220,13 @@ fillBuffer p particle view size0 = do
     VM.write (particlesBuffer p) (size + 1) y
     return $ size + 2
 
+updateVBO :: Particles -> IO ()
+updateVBO = Utils.updateVBO <$> particlesVBO <*> particlesBuffer
+
 draw :: Particles -> GLsizei -> IO ()
-draw p size = do
-  updateVBO (particlesVBO p) (particlesBuffer p)
-  glDrawArraysInstanced
-    GL_TRIANGLE_STRIP 0 (modelVertexCount (particlesModel p)) size
+draw p = glDrawArraysInstanced GL_TRIANGLE_STRIP 0 vertexCount
+       . (`quot` instanceDataLength)
+ where vertexCount = modelVertexCount $ particlesModel p
 
 unbind :: IO ()
 unbind = do
