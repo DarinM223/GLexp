@@ -1,7 +1,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module Engine.Vec
   ( UpdateM ()
-  , ReadVec (read)
+  , ReadVec (freeze, read)
   , Vec ()
   , unsafeRunUpdateM
   , new
@@ -20,6 +20,7 @@ newtype UpdateM a = UpdateM (IO a) deriving (Functor, Applicative, Monad)
 
 class Monad m => ReadVec m where
   read :: VM.Storable a => Vec a -> Int -> m a
+  freeze :: VM.Storable a => Vec a -> m (V.Vector a)
 
 -- | WARNING: DO NOT USE THIS FUNCTION OUTSIDE OF THE MAIN GAME LOOP!
 --
@@ -39,12 +40,18 @@ fromList :: VM.Storable a => [a] -> IO (Vec a)
 fromList = fmap Vec . V.thaw . V.fromList
 
 instance ReadVec IO where
-  read v = VM.read (unVec v)
+  read = VM.read . unVec
   {-# INLINE read #-}
+
+  freeze = V.freeze . unVec
+  {-# INLINE freeze #-}
 
 instance ReadVec UpdateM where
   read v = UpdateM . VM.read (unVec v)
   {-# INLINE read #-}
+
+  freeze = UpdateM . V.freeze . unVec
+  {-# INLINE freeze #-}
 
 write :: VM.Storable a => Vec a -> Int -> a -> UpdateM ()
 write v i a = UpdateM $ VM.write (unVec v) i a

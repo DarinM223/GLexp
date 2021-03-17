@@ -25,7 +25,7 @@ import qualified Engine.Vec as V
 data FixedArrayElem a = FixedArrayElem
   { arrayElem :: !a
   , nextFree  :: {-# UNPACK #-} !Int
-  }
+  } deriving Show
 
 instance Storable a => Storable (FixedArrayElem a) where
   sizeOf _ = sizeOf (undefined :: a) + sizeOf (undefined :: Int)
@@ -73,6 +73,7 @@ delete arr i
 
 read :: (V.ReadVec m, VM.Storable a) => Array a -> Int -> m (FixedArrayElem a)
 read arr = V.read (arrayStore arr)
+{-# INLINABLE read #-}
 
 write :: VM.Storable a => Array a -> Int -> a -> V.UpdateM ()
 write arr i v = modify arr (const v) i
