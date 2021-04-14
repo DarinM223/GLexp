@@ -65,6 +65,7 @@ mkWindow params = do
   GLFW.windowHint $ GLFW.WindowHint'ContextVersionMajor 3
   GLFW.windowHint $ GLFW.WindowHint'OpenGLProfile GLFW.OpenGLProfile'Core
   Just win <- GLFW.createWindow 640 480 "GLFW Demo" Nothing Nothing
+  GLFW.maximizeWindow win
   GLFW.makeContextCurrent (Just win)
   (x, y) <- GLFW.getFramebufferSize win
   glViewport 0 0 (fromIntegral x) (fromIntegral y)
