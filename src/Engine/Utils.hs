@@ -31,6 +31,7 @@ import Foreign.Ptr (castPtr, nullPtr, plusPtr)
 import Foreign.Storable (Storable (..), peek, sizeOf)
 import Graphics.GL.Core45
 import Graphics.GL.Types
+import Streamly.Data.Fold.Tee (Tee (Tee, toFold))
 import System.IO (IOMode (ReadMode), withFile)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
@@ -38,10 +39,10 @@ import qualified Data.ByteString.Unsafe as BS
 import qualified Data.Vector.Storable as V
 import qualified Data.Vector.Storable.Mutable as VM
 import qualified Linear
+import qualified Streamly.Data.Fold as Fold
 import qualified Streamly.External.ByteString as SBS
 import qualified Streamly.FileSystem.Handle as SF
-import qualified Streamly.Internal.Data.Fold as FL
-import qualified Streamly.Internal.Memory.Array as A
+import qualified Streamly.Internal.Data.Array.Foreign as A
 import qualified Streamly.Prelude as S
 
 perspectiveMat :: Int -> Int -> Linear.M44 GLfloat
@@ -175,10 +176,10 @@ loadObj path = do
     S.unfold SF.read handle
       & S.splitOn (== 10) SBS.write
       & S.filter ((> 1) . BSC.length)
-      & S.fold ((,,,) <$> foldV <*> foldVt <*> foldVn <*> foldF)
+      & S.fold combinedFolds
   vec <- VM.new (A.length fs * 24)
   S.unfold A.read fs
-    & S.foldlM' (writeVec vs vts vns vec) (0 :: Int)
+    & S.foldlM' (writeVec vs vts vns vec) (pure (0 :: Int))
     & S.drain
   toRawModel vec
  where
@@ -188,22 +189,24 @@ loadObj path = do
     writeVertex (i + 16) (fC f) vec vs vts vns
     return (i + 24)
   writeVertex i (ThreeTuple a b c) vec vs vts vns = do
-    for_ (A.readIndex vs (a - 1)) $ \v -> do
+    for_ (A.getIndex vs (a - 1)) $ \v -> do
       VM.write vec i (threeDX v)
       VM.write vec (i + 1) (threeDY v)
       VM.write vec (i + 2) (threeDZ v)
-    for_ (A.readIndex vts (b - 1)) $ \vt -> do
+    for_ (A.getIndex vts (b - 1)) $ \vt -> do
       VM.write vec (i + 3) (twoDX vt)
       VM.write vec (i + 4) (twoDY vt)
-    for_ (A.readIndex vns (c - 1)) $ \vn -> do
+    for_ (A.getIndex vns (c - 1)) $ \vn -> do
       VM.write vec (i + 5) (threeDX vn)
       VM.write vec (i + 6) (threeDY vn)
       VM.write vec (i + 7) (threeDZ vn)
 
-  foldV = FL.lfilter (isC 'v') (FL.lmap (run (parse3d "v")) A.write)
-  foldVt = FL.lfilter (isVC 't') (FL.lmap (run (parse2d "vt")) A.write)
-  foldVn = FL.lfilter (isVC 'n') (FL.lmap (run (parse3d "vn")) A.write)
-  foldF = FL.lfilter (isC 'f') (FL.lmap (run parseFragment) A.write)
+  foldV = Fold.filter (isC 'v') (Fold.lmap (run (parse3d "v")) A.write)
+  foldVt = Fold.filter (isVC 't') (Fold.lmap (run (parse2d "vt")) A.write)
+  foldVn = Fold.filter (isVC 'n') (Fold.lmap (run (parse3d "vn")) A.write)
+  foldF = Fold.filter (isC 'f') (Fold.lmap (run parseFragment) A.write)
+  combinedFolds = toFold $
+    (,,,) <$> Tee foldV <*> Tee foldVt <*> Tee foldVn <*> Tee foldF
 
   run p = either error id . parseOnly p
   isC c arr = BSC.index arr 0 == c && BSC.index arr 1 == ' '

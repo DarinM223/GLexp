@@ -8,4 +8,9 @@ package *
 source-repository-package
   type: git
   location: https://github.com/DarinM223/derive-storable-th
-  tag: 8692837d9793e151401b740a2b25f2558fea9ca7
+  tag: f51895c2dba8441269de738d6ea253f16309eeab
+
+source-repository-package
+  type: git
+  location: https://github.com/psibi/streamly-bytestring
+  tag: 30469ece37d28a58b97d26d378544a90860eb15b
