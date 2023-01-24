@@ -1,6 +1,6 @@
-game-engine
+GLexp
 ===========
 
-### A game engine in Haskell following ThinMatrix's OpenGL tutorials.
+### An OpenGL 3D experiment in Haskell following ThinMatrix's Java OpenGL tutorials.
 
 ![demo](/demo.gif "Engine demo")
