@@ -45,7 +45,7 @@ library
                      , Engine.Water.Water
   -- other-modules:
   -- other-extensions:
-  build-depends:       base ^>=4.15.0.0
+  build-depends:       base ^>=4.21.0.0
                      , attoparsec
                      , bytestring
                      , containers
@@ -58,8 +58,6 @@ library
                      , primitive
                      , random
                      , raw-strings-qq
-                     , streamly
-                     , streamly-bytestring
                      , vector
   hs-source-dirs:      src
   default-language:    Haskell2010
@@ -68,7 +66,7 @@ executable game-engine
   main-is:             Main.hs
   -- other-modules:
   -- other-extensions:
-  build-depends:       base ^>=4.15.0.0, game-engine
+  build-depends:       base ^>=4.21.0.0, game-engine
   ghc-options:         -O2
   hs-source-dirs:      src-exe
   default-language:    Haskell2010
@@ -78,7 +76,7 @@ test-suite game-engine-test
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
   main-is:             Main.hs
-  build-depends:       base ^>=4.15.0.0
+  build-depends:       base ^>=4.21.0.0
                      , game-engine
                      , tasty
                      , tasty-hunit
