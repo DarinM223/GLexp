@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE TemplateHaskell #-}
 module Engine.Types where
 
@@ -6,8 +5,7 @@ import Control.Exception (Exception)
 import Data.Fixed (mod')
 import Data.Word (Word8)
 import Engine.Unboxed
-import Foreign.Storable.Generic
-import GHC.Generics
+import Foreign.Storable.TH (deriveStorable)
 import Graphics.GL.Core45
 import Graphics.GL.Types
 import Linear ((^+^), (^-^), (*^))
@@ -80,9 +78,8 @@ data Light = Light
   { lightPos         :: {-# UNPACK #-} !(Linear.V3 GLfloat)
   , lightColor       :: {-# UNPACK #-} !(Linear.V3 GLfloat)
   , lightAttenuation :: {-# UNPACK #-} !(Linear.V3 GLfloat)
-  } deriving (Show, Generic)
-
-instance GStorable Light
+  } deriving Show
+$(deriveStorable ''Light)
 
 padLights :: [Light] -> Int -> [Light]
 padLights (l:ls) lights | lights > 0 = l:padLights ls (lights - 1)
@@ -103,9 +100,8 @@ setLightUniforms light posLoc colorLoc attLoc = do
 data RawModel = RawModel
   { modelVao         :: {-# UNPACK #-} !GLuint
   , modelVertexCount :: {-# UNPACK #-} !GLsizei
-  } deriving (Show, Generic)
-
-instance GStorable RawModel
+  } deriving Show
+$(deriveStorable ''RawModel)
 
 data Texture = Texture
   { textureID              :: {-# UNPACK #-} !GLuint
@@ -114,9 +110,8 @@ data Texture = Texture
   , textureTransparent     :: {-# UNPACK #-} !GLboolean
   , textureUseFakeLighting :: {-# UNPACK #-} !GLfloat
   , textureNumRows         :: {-# UNPACK #-} !Int
-  } deriving (Show, Generic)
-
-instance GStorable Texture
+  } deriving Show
+$(deriveStorable ''Texture)
 
 data Character = Character
   { charId       :: {-# UNPACK #-} !Int
@@ -127,40 +122,35 @@ data Character = Character
   , charXOffset  :: {-# UNPACK #-} !GLfloat
   , charYOffset  :: {-# UNPACK #-} !GLfloat
   , charXAdvance :: {-# UNPACK #-} !GLfloat
-  } deriving (Show, Generic)
-
-instance GStorable Character
+  } deriving Show
+$(deriveStorable ''Character)
 
 data TwoDPoint = TwoDPoint
   { twoDX :: {-# UNPACK #-} !GLfloat
   , twoDY :: {-# UNPACK #-} !GLfloat
-  } deriving (Show, Generic)
-
-instance GStorable TwoDPoint
+  } deriving Show
+$(deriveStorable ''TwoDPoint)
 
 data ThreeDPoint = ThreeDPoint
   { threeDX :: {-# UNPACK #-} !GLfloat
   , threeDY :: {-# UNPACK #-} !GLfloat
   , threeDZ :: {-# UNPACK #-} !GLfloat
-  } deriving (Show, Generic)
-
-instance GStorable ThreeDPoint
+  } deriving Show
+$(deriveStorable ''ThreeDPoint)
 
 data ThreeTuple = ThreeTuple
   { t1 :: {-# UNPACK #-} !Int
   , t2 :: {-# UNPACK #-} !Int
   , t3 :: {-# UNPACK #-} !Int
-  } deriving (Show, Generic)
-
-instance GStorable ThreeTuple
+  } deriving Show
+$(deriveStorable ''ThreeTuple)
 
 data FData = FData
   { fA :: {-# UNPACK #-} !ThreeTuple
   , fB :: {-# UNPACK #-} !ThreeTuple
   , fC :: {-# UNPACK #-} !ThreeTuple
-  } deriving (Show, Generic)
-
-instance GStorable FData
+  } deriving Show
+$(deriveStorable ''FData)
 
 data Line = Line
   { lineY       :: {-# UNPACK #-} !GLfloat
@@ -178,9 +168,8 @@ data Particle = Particle
   , particleTexOffset1    :: {-# UNPACK #-} !(Linear.V2 GLfloat)
   , particleTexOffset2    :: {-# UNPACK #-} !(Linear.V2 GLfloat)
   , particleBlend         :: {-# UNPACK #-} !GLfloat
-  } deriving (Show, Generic)
-
-instance GStorable Particle
+  } deriving Show
+$(deriveStorable ''Particle)
 
 data Entity = Entity
   { entityPos    :: {-# UNPACK #-} !(Linear.V3 GLfloat)
@@ -189,9 +178,8 @@ data Entity = Entity
   , entityTex    :: {-# UNPACK #-} !Texture
   , entityModel  :: {-# UNPACK #-} !RawModel
   , entityTexIdx :: {-# UNPACK #-} !Int
-  } deriving (Show, Generic)
-
-instance GStorable Entity
+  } deriving Show
+$(deriveStorable ''Entity)
 
 textureXOffset :: Entity -> GLfloat
 textureXOffset e = column / fromIntegral (textureNumRows (entityTex e))
@@ -206,18 +194,14 @@ data Projectile = Projectile
   , projectileRay    :: {-# UNPACK #-} !(Linear.V3 GLfloat)
   , projectileEntity :: {-# UNPACK #-} !Entity
   }
-  deriving (Generic)
-
-instance GStorable Projectile
+$(deriveStorable ''Projectile)
 
 data WaterTile = WaterTile
   { tileX      :: {-# UNPACK #-} !GLfloat
   , tileZ      :: {-# UNPACK #-} !GLfloat
   , tileHeight :: {-# UNPACK #-} !GLfloat
   }
-  deriving (Generic)
-
-instance GStorable WaterTile
+$(deriveStorable ''WaterTile)
 
 data TexturePack = TexturePack
   { packBackground :: {-# UNPACK #-} !Texture
