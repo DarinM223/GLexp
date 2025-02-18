@@ -49,7 +49,7 @@ library
                      , attoparsec
                      , bytestring
                      , containers
-                     , derive-storable-th
+                     , derive-storable
                      , gl
                      , GLFW-b
                      , JuicyPixels
