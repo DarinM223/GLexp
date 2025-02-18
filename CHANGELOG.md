@@ -1,4 +1,4 @@
-# Revision history for game-engine
+# Revision history for glexp
 
 ## 0.1.0.0 -- YYYY-mm-dd
 
