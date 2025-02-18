@@ -18,6 +18,7 @@ import Control.Monad (unless)
 import Data.Foldable (for_)
 import Data.Functor (($>))
 import Foreign.Storable (Storable (..))
+import Foreign.Storable.TH.Internal (roundUp)
 import qualified Data.Foldable as F
 import qualified Data.Vector.Storable.Mutable as VM
 import qualified Engine.Vec as V
@@ -29,13 +30,13 @@ data FixedArrayElem a = FixedArrayElem
 
 instance Storable a => Storable (FixedArrayElem a) where
   sizeOf _ = sizeOf (undefined :: a) + sizeOf (undefined :: Int)
-  alignment _ = max (sizeOf (undefined :: a)) (sizeOf (undefined :: Int))
+  alignment _ = max (alignment (undefined :: a)) (alignment (undefined :: Int))
   peek ptr = FixedArrayElem
     <$> peekByteOff ptr 0
-    <*> peekByteOff ptr (sizeOf (undefined :: a))
+    <*> peekByteOff ptr (roundUp (sizeOf (undefined :: a)) (alignment (undefined :: FixedArrayElem a)))
   poke ptr e = do
     pokeByteOff ptr 0 $ arrayElem e
-    pokeByteOff ptr (sizeOf (undefined :: a)) $ nextFree e
+    pokeByteOff ptr (roundUp (sizeOf (undefined :: a)) (alignment (undefined :: FixedArrayElem a))) $ nextFree e
 
 mkElem :: a -> FixedArrayElem a
 mkElem a = FixedArrayElem a 0
