@@ -8,4 +8,4 @@ package *
 source-repository-package
   type: git
   location: https://github.com/DarinM223/derive-storable-th
-  tag: 7cc71970a53e7de1ca8c8b3464f90d9f46e0499f
+  tag: 3d6b527eaea7dc861c7dd82910120c1a0f129900
