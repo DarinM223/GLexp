@@ -1,3 +1,4 @@
+{-# LANGUAGE MultilineStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RecordWildCards #-}
 module Engine.Terrain.Terrain
@@ -29,106 +30,105 @@ import Graphics.GL.Types
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Vector.Storable as V
 import qualified Linear
-import qualified Text.RawString.QQ as QQ
 
 vertexShaderSrc :: Int -> ByteString
 vertexShaderSrc maxLights = BS.pack (shaderHeader maxLights) <> BS.pack
-  [QQ.r|
-    in vec3 position;
-    in vec2 texCoord;
-    in vec3 normal;
+  """
+  in vec3 position;
+  in vec2 texCoord;
+  in vec3 normal;
 
-    out vec2 v_texCoord;
-    out vec3 surfaceNormal;
-    out vec3 lightVec[NUM_LIGHTS];
-    out vec3 cameraVec;
-    out float visibility;
+  out vec2 v_texCoord;
+  out vec3 surfaceNormal;
+  out vec3 lightVec[NUM_LIGHTS];
+  out vec3 cameraVec;
+  out float visibility;
 
-    uniform mat4 model;      // Transformation of the model
-    uniform mat4 view;       // Transformation of the camera
-    uniform mat4 projection; // Clipping coordinates outside FOV
-    uniform vec3 lightPosition[NUM_LIGHTS];
-    uniform vec4 clipPlane;
+  uniform mat4 model;      // Transformation of the model
+  uniform mat4 view;       // Transformation of the camera
+  uniform mat4 projection; // Clipping coordinates outside FOV
+  uniform vec3 lightPosition[NUM_LIGHTS];
+  uniform vec4 clipPlane;
 
-    const float density = 0.007;
-    const float gradient = 1.5;
+  const float density = 0.007;
+  const float gradient = 1.5;
 
-    void main() {
-      vec4 worldPosition = model * vec4(position, 1.0);
-      gl_ClipDistance[0] = dot(worldPosition, clipPlane);
-      vec4 positionRelativeToCam = view * worldPosition;
-      gl_Position = projection * positionRelativeToCam;
-      v_texCoord = texCoord;
+  void main() {
+    vec4 worldPosition = model * vec4(position, 1.0);
+    gl_ClipDistance[0] = dot(worldPosition, clipPlane);
+    vec4 positionRelativeToCam = view * worldPosition;
+    gl_Position = projection * positionRelativeToCam;
+    v_texCoord = texCoord;
 
-      surfaceNormal = (model * vec4(normal, 0.0)).xyz;
-      for (int i = 0; i < NUM_LIGHTS; i++) {
-        lightVec[i] = lightPosition[i] - worldPosition.xyz;
-      }
-      cameraVec = (inverse(view) * vec4(0.0, 0.0, 0.0, 1.0)).xyz - worldPosition.xyz;
-
-      float distance = length(positionRelativeToCam.xyz);
-      visibility = clamp(exp(-pow(distance * density, gradient)), 0.0, 1.0);
+    surfaceNormal = (model * vec4(normal, 0.0)).xyz;
+    for (int i = 0; i < NUM_LIGHTS; i++) {
+      lightVec[i] = lightPosition[i] - worldPosition.xyz;
     }
-  |]
+    cameraVec = (inverse(view) * vec4(0.0, 0.0, 0.0, 1.0)).xyz - worldPosition.xyz;
+
+    float distance = length(positionRelativeToCam.xyz);
+    visibility = clamp(exp(-pow(distance * density, gradient)), 0.0, 1.0);
+  }
+  """
 
 fragmentShaderSrc :: Int -> ByteString
 fragmentShaderSrc maxLights = BS.pack (shaderHeader maxLights) <> BS.pack
-  [QQ.r|
-    in vec2 v_texCoord;
-    in vec3 surfaceNormal;
-    in vec3 lightVec[NUM_LIGHTS];
-    in vec3 cameraVec;
-    in float visibility;
+  """
+  in vec2 v_texCoord;
+  in vec3 surfaceNormal;
+  in vec3 lightVec[NUM_LIGHTS];
+  in vec3 cameraVec;
+  in float visibility;
 
-    uniform sampler2D backgroundTexture;
-    uniform sampler2D rTexture;
-    uniform sampler2D gTexture;
-    uniform sampler2D bTexture;
-    uniform sampler2D blendMap;
+  uniform sampler2D backgroundTexture;
+  uniform sampler2D rTexture;
+  uniform sampler2D gTexture;
+  uniform sampler2D bTexture;
+  uniform sampler2D blendMap;
 
-    uniform vec3 lightColor[NUM_LIGHTS];
-    uniform vec3 attenuation[NUM_LIGHTS];
-    uniform float shineDamper;
-    uniform float reflectivity;
-    uniform vec3 skyColor;
+  uniform vec3 lightColor[NUM_LIGHTS];
+  uniform vec3 attenuation[NUM_LIGHTS];
+  uniform float shineDamper;
+  uniform float reflectivity;
+  uniform vec3 skyColor;
 
-    out vec4 color;
+  out vec4 color;
 
-    void main() {
-      vec4 blendMapColor = texture(blendMap, v_texCoord);
-      float backTextureAmount = 1 - (blendMapColor.r + blendMapColor.g + blendMapColor.b);
-      vec2 tiledCoords = v_texCoord * 40.0;
-      vec4 backgroundTextureColor = texture(backgroundTexture, tiledCoords) * backTextureAmount;
-      vec4 rTextureColor = texture(rTexture, tiledCoords) * blendMapColor.r;
-      vec4 gTextureColor = texture(gTexture, tiledCoords) * blendMapColor.g;
-      vec4 bTextureColor = texture(bTexture, tiledCoords) * blendMapColor.b;
-      vec4 totalColor = backgroundTextureColor + rTextureColor + gTextureColor + bTextureColor;
+  void main() {
+    vec4 blendMapColor = texture(blendMap, v_texCoord);
+    float backTextureAmount = 1 - (blendMapColor.r + blendMapColor.g + blendMapColor.b);
+    vec2 tiledCoords = v_texCoord * 40.0;
+    vec4 backgroundTextureColor = texture(backgroundTexture, tiledCoords) * backTextureAmount;
+    vec4 rTextureColor = texture(rTexture, tiledCoords) * blendMapColor.r;
+    vec4 gTextureColor = texture(gTexture, tiledCoords) * blendMapColor.g;
+    vec4 bTextureColor = texture(bTexture, tiledCoords) * blendMapColor.b;
+    vec4 totalColor = backgroundTextureColor + rTextureColor + gTextureColor + bTextureColor;
 
-      vec3 unitNormal = normalize(surfaceNormal);
-      vec3 unitCameraVec = normalize(cameraVec);
+    vec3 unitNormal = normalize(surfaceNormal);
+    vec3 unitCameraVec = normalize(cameraVec);
 
-      vec3 totalDiffuse = vec3(0.0);
-      vec3 totalSpecular = vec3(0.0);
-      for (int i = 0; i < NUM_LIGHTS; i++) {
-        float distance = length(lightVec[i]);
-        float attenuationFactor = attenuation[i].x +
-                                  attenuation[i].y * distance +
-                                  attenuation[i].z * distance * distance;
-        vec3 unitLightVec = normalize(lightVec[i]);
-        float brightness = max(dot(unitNormal, unitLightVec), 0.0);
-        vec3 reflectedLightVec = reflect(-unitLightVec, unitNormal);
-        float specularFactor = max(dot(reflectedLightVec, unitCameraVec), 0.0);
-        float dampedFactor = pow(specularFactor, shineDamper);
+    vec3 totalDiffuse = vec3(0.0);
+    vec3 totalSpecular = vec3(0.0);
+    for (int i = 0; i < NUM_LIGHTS; i++) {
+      float distance = length(lightVec[i]);
+      float attenuationFactor = attenuation[i].x +
+                                attenuation[i].y * distance +
+                                attenuation[i].z * distance * distance;
+      vec3 unitLightVec = normalize(lightVec[i]);
+      float brightness = max(dot(unitNormal, unitLightVec), 0.0);
+      vec3 reflectedLightVec = reflect(-unitLightVec, unitNormal);
+      float specularFactor = max(dot(reflectedLightVec, unitCameraVec), 0.0);
+      float dampedFactor = pow(specularFactor, shineDamper);
 
-        totalDiffuse += brightness * lightColor[i] / attenuationFactor;
-        totalSpecular += dampedFactor * reflectivity * lightColor[i] / attenuationFactor;
-      }
-      totalDiffuse = max(totalDiffuse, 0.2);
-
-      color = vec4(totalDiffuse, 1.0) * totalColor + vec4(totalSpecular, 1.0);
-      color = mix(vec4(skyColor, 1.0), color, visibility);
+      totalDiffuse += brightness * lightColor[i] / attenuationFactor;
+      totalSpecular += dampedFactor * reflectivity * lightColor[i] / attenuationFactor;
     }
-  |]
+    totalDiffuse = max(totalDiffuse, 0.2);
+
+    color = vec4(totalDiffuse, 1.0) * totalColor + vec4(totalSpecular, 1.0);
+    color = mix(vec4(skyColor, 1.0), color, visibility);
+  }
+  """
 
 terrainSize :: GLfloat
 terrainSize = 800

@@ -1,3 +1,4 @@
+{-# LANGUAGE MultilineStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RecordWildCards #-}
 module Engine.Water.Water
@@ -31,7 +32,6 @@ import Linear ((!!*))
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Vector.Storable as V
 import qualified Linear
-import qualified Text.RawString.QQ as QQ
 
 waterTileSize :: GLfloat
 waterTileSize = 20
@@ -41,109 +41,109 @@ waveSpeed = 0.03
 
 vertexShaderSrc :: Int -> ByteString
 vertexShaderSrc maxLights = BS.pack (shaderHeader maxLights) <> BS.pack
-  [QQ.r|
-    in vec2 position;
-    out vec4 clipSpace;
-    out vec2 texCoord;
-    out vec3 lightVec[NUM_LIGHTS];
-    out vec3 cameraVec;
+  """
+  in vec2 position;
+  out vec4 clipSpace;
+  out vec2 texCoord;
+  out vec3 lightVec[NUM_LIGHTS];
+  out vec3 cameraVec;
 
-    uniform mat4 model;
-    uniform mat4 view;
-    uniform mat4 projection;
-    uniform vec3 lightPosition[NUM_LIGHTS];
-    uniform vec3 cameraPosition;
+  uniform mat4 model;
+  uniform mat4 view;
+  uniform mat4 projection;
+  uniform vec3 lightPosition[NUM_LIGHTS];
+  uniform vec3 cameraPosition;
 
-    const float tiling = 6.0;
+  const float tiling = 6.0;
 
-    void main() {
-      vec4 worldPosition = model * vec4(position.x, 0.0, position.y, 1.0);
-      clipSpace = projection * view * worldPosition;
-      gl_Position = clipSpace;
-      texCoord = vec2(position.x / 2.0 + 0.5, position.y / 2.0 + 0.5) * tiling;
-      for (int i = 0; i < NUM_LIGHTS; i++) {
-        lightVec[i] = worldPosition.xyz - lightPosition[i];
-      }
-      cameraVec = cameraPosition - worldPosition.xyz;
+  void main() {
+    vec4 worldPosition = model * vec4(position.x, 0.0, position.y, 1.0);
+    clipSpace = projection * view * worldPosition;
+    gl_Position = clipSpace;
+    texCoord = vec2(position.x / 2.0 + 0.5, position.y / 2.0 + 0.5) * tiling;
+    for (int i = 0; i < NUM_LIGHTS; i++) {
+      lightVec[i] = worldPosition.xyz - lightPosition[i];
     }
-  |]
+    cameraVec = cameraPosition - worldPosition.xyz;
+  }
+  """
 
 fragmentShaderSrc :: Int -> ByteString
 fragmentShaderSrc maxLights = BS.pack (shaderHeader maxLights) <> BS.pack
-  [QQ.r|
-    in vec4 clipSpace;
-    in vec2 texCoord;
-    in vec3 lightVec[NUM_LIGHTS];
-    in vec3 cameraVec;
-    out vec4 color;
+  """
+  in vec4 clipSpace;
+  in vec2 texCoord;
+  in vec3 lightVec[NUM_LIGHTS];
+  in vec3 cameraVec;
+  out vec4 color;
 
-    uniform sampler2D reflectionTexture;
-    uniform sampler2D refractionTexture;
-    uniform sampler2D dudvMap;
-    uniform sampler2D normalMap;
-    uniform sampler2D depthMap;
-    uniform vec3 lightColor[NUM_LIGHTS];
-    uniform vec3 attenuation[NUM_LIGHTS];
+  uniform sampler2D reflectionTexture;
+  uniform sampler2D refractionTexture;
+  uniform sampler2D dudvMap;
+  uniform sampler2D normalMap;
+  uniform sampler2D depthMap;
+  uniform vec3 lightColor[NUM_LIGHTS];
+  uniform vec3 attenuation[NUM_LIGHTS];
 
-    uniform float moveFactor;
+  uniform float moveFactor;
 
-    const float waveStrength = 0.02;
-    const float shineDamper = 20.0;
-    const float reflectivity = 0.6;
+  const float waveStrength = 0.02;
+  const float shineDamper = 20.0;
+  const float reflectivity = 0.6;
 
-    const float near = 0.1;
-    const float far = 1000.0;
+  const float near = 0.1;
+  const float far = 1000.0;
 
-    void main() {
-      vec2 ndc = (clipSpace.xy / clipSpace.w) / 2.0 + 0.5;
-      vec2 refractTexCoords = vec2(ndc.x, ndc.y);
-      vec2 reflectTexCoords = vec2(ndc.x, -ndc.y);
+  void main() {
+    vec2 ndc = (clipSpace.xy / clipSpace.w) / 2.0 + 0.5;
+    vec2 refractTexCoords = vec2(ndc.x, ndc.y);
+    vec2 reflectTexCoords = vec2(ndc.x, -ndc.y);
 
-      float depth = texture(depthMap, refractTexCoords).r;
-      float floorDist = 2.0 * near * far / (far + near - (2.0 * depth - 1.0) * (far - near));
-      depth = gl_FragCoord.z;
-      float waterDist = 2.0 * near * far / (far + near - (2.0 * depth - 1.0) * (far - near));
+    float depth = texture(depthMap, refractTexCoords).r;
+    float floorDist = 2.0 * near * far / (far + near - (2.0 * depth - 1.0) * (far - near));
+    depth = gl_FragCoord.z;
+    float waterDist = 2.0 * near * far / (far + near - (2.0 * depth - 1.0) * (far - near));
 
-      float waterDepth = floorDist - waterDist;
+    float waterDepth = floorDist - waterDist;
 
-      vec2 distortedCoords = texture(dudvMap, vec2(texCoord.x + moveFactor, texCoord.y)).rg * 0.1;
-      distortedCoords = texCoord + vec2(distortedCoords.x, distortedCoords.y + moveFactor);
-      vec2 totalDistortion = (texture(dudvMap, distortedCoords).rg * 2.0 - 1.0) * waveStrength * clamp(waterDepth / 20.0, 0.0, 1.0);
+    vec2 distortedCoords = texture(dudvMap, vec2(texCoord.x + moveFactor, texCoord.y)).rg * 0.1;
+    distortedCoords = texCoord + vec2(distortedCoords.x, distortedCoords.y + moveFactor);
+    vec2 totalDistortion = (texture(dudvMap, distortedCoords).rg * 2.0 - 1.0) * waveStrength * clamp(waterDepth / 20.0, 0.0, 1.0);
 
-      refractTexCoords += totalDistortion;
-      refractTexCoords = clamp(refractTexCoords, 0.001, 0.999);
+    refractTexCoords += totalDistortion;
+    refractTexCoords = clamp(refractTexCoords, 0.001, 0.999);
 
-      reflectTexCoords += totalDistortion;
-      reflectTexCoords.x = clamp(reflectTexCoords.x, 0.001, 0.999);
-      reflectTexCoords.y = clamp(reflectTexCoords.y, -0.999, -0.001);
+    reflectTexCoords += totalDistortion;
+    reflectTexCoords.x = clamp(reflectTexCoords.x, 0.001, 0.999);
+    reflectTexCoords.y = clamp(reflectTexCoords.y, -0.999, -0.001);
 
-      vec4 reflectColor = texture(reflectionTexture, reflectTexCoords);
-      vec4 refractColor = texture(refractionTexture, refractTexCoords);
+    vec4 reflectColor = texture(reflectionTexture, reflectTexCoords);
+    vec4 refractColor = texture(refractionTexture, refractTexCoords);
 
-      vec4 normalMapColor = texture(normalMap, distortedCoords);
-      vec3 normal = vec3(normalMapColor.r * 2.0 - 1.0, normalMapColor.b * 3.0, normalMapColor.g * 2.0 - 1.0);
-      vec3 unitNormal = normalize(normal);
+    vec4 normalMapColor = texture(normalMap, distortedCoords);
+    vec3 normal = vec3(normalMapColor.r * 2.0 - 1.0, normalMapColor.b * 3.0, normalMapColor.g * 2.0 - 1.0);
+    vec3 unitNormal = normalize(normal);
 
-      vec3 unitCameraVec = normalize(cameraVec);
-      float refractiveFactor = dot(unitCameraVec, normal);
+    vec3 unitCameraVec = normalize(cameraVec);
+    float refractiveFactor = dot(unitCameraVec, normal);
 
-      vec3 totalSpecular = vec3(0.0);
-      for (int i = 0; i < NUM_LIGHTS; i++) {
-        float distance = length(lightVec[i]);
-        float attenuationFactor = attenuation[i].x +
-                                  attenuation[i].y * distance +
-                                  attenuation[i].z * distance * distance;
-        vec3 reflectedLightVec = reflect(normalize(lightVec[i]), unitNormal);
-        float specularFactor = max(dot(reflectedLightVec, unitCameraVec), 0.0);
-        float dampedFactor = pow(specularFactor, shineDamper);
-        totalSpecular += dampedFactor * reflectivity * lightColor[i] * clamp(waterDepth / 5.0, 0.0, 1.0) / attenuationFactor;
-      }
-
-      color = mix(reflectColor, refractColor, refractiveFactor);
-      color = mix(color, vec4(0.0, 0.3, 0.5, 1.0), 0.2) + vec4(totalSpecular, 0.0);
-      color.a = clamp(waterDepth / 3.0, 0.0, 1.0);
+    vec3 totalSpecular = vec3(0.0);
+    for (int i = 0; i < NUM_LIGHTS; i++) {
+      float distance = length(lightVec[i]);
+      float attenuationFactor = attenuation[i].x +
+                                attenuation[i].y * distance +
+                                attenuation[i].z * distance * distance;
+      vec3 reflectedLightVec = reflect(normalize(lightVec[i]), unitNormal);
+      float specularFactor = max(dot(reflectedLightVec, unitCameraVec), 0.0);
+      float dampedFactor = pow(specularFactor, shineDamper);
+      totalSpecular += dampedFactor * reflectivity * lightColor[i] * clamp(waterDepth / 5.0, 0.0, 1.0) / attenuationFactor;
     }
-  |]
+
+    color = mix(reflectColor, refractColor, refractiveFactor);
+    color = mix(color, vec4(0.0, 0.3, 0.5, 1.0), 0.2) + vec4(totalSpecular, 0.0);
+    color.a = clamp(waterDepth / 3.0, 0.0, 1.0);
+  }
+  """
 
 data Program = Program
   { program              :: {-# UNPACK #-} !GLuint
