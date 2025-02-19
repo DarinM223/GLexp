@@ -1,5 +1,4 @@
 {-# LANGUAGE MultilineStrings #-}
-{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RecordWildCards #-}
 module Engine.Particle
   ( Program
