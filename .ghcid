@@ -1,1 +1,1 @@
---restart=game-engine.cabal -c cabal v2-repl
+--restart=glexp.cabal -c cabal v2-repl

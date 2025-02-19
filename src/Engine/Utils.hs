@@ -1,5 +1,7 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE ViewPatterns #-}
 module Engine.Utils
   ( errorString
   , perspectiveMat
@@ -18,11 +20,10 @@ module Engine.Utils
 
 import Codec.Picture
 import Control.Exception (throwIO)
-import Control.Monad (when)
+import Control.Monad (unless, void, when)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Attoparsec.ByteString.Char8
-import Data.Foldable (for_, traverse_)
-import Data.Function ((&))
+import Data.Foldable (foldlM, for_, traverse_)
 import Engine.Types
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Array (allocaArray, peekArray)
@@ -31,19 +32,18 @@ import Foreign.Ptr (castPtr, nullPtr, plusPtr)
 import Foreign.Storable (Storable (..), peek, sizeOf)
 import Graphics.GL.Core45
 import Graphics.GL.Types
-import Streamly.Data.Fold.Tee (Tee (Tee, toFold))
-import System.IO (IOMode (ReadMode), withFile)
+import System.IO (IOMode (ReadMode), hIsEOF, withFile)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString.Unsafe as BS
 import qualified Data.Vector.Storable as V
 import qualified Data.Vector.Storable.Mutable as VM
 import qualified Linear
-import qualified Streamly.Data.Fold as Fold
-import qualified Streamly.External.ByteString as SBS
-import qualified Streamly.FileSystem.Handle as SF
-import qualified Streamly.Internal.Data.Array.Foreign as A
-import qualified Streamly.Prelude as S
+
+infixr 5 :<
+
+pattern (:<) :: Char -> BSC.ByteString -> BSC.ByteString
+pattern b :< bs <- (BSC.uncons -> Just (b, bs))
 
 perspectiveMat :: Int -> Int -> Linear.M44 GLfloat
 perspectiveMat width height =
@@ -172,45 +172,41 @@ loadVAOWithIndices v e = V.unsafeWith v $ \vPtr ->
 
 loadObj :: FilePath -> IO RawModel
 loadObj path = do
-  (vs, vts, vns, fs) <- withFile path ReadMode $ \handle ->
-    S.unfold SF.read handle
-      & S.splitOn (== 10) SBS.write
-      & S.filter ((> 1) . BSC.length)
-      & S.fold combinedFolds
-  vec <- VM.new (A.length fs * 24)
-  S.unfold A.read fs
-    & S.foldlM' (writeVec vs vts vns vec) (pure (0 :: Int))
-    & S.drain
+  (vs, vts, vns, fs) <- (\(vs', vts', vns', fs') -> (V.fromList vs', V.fromList vts', V.fromList vns', fs'))
+                      . foldr build ([], [], [], [])
+                      . BSC.lines
+                    <$> BS.readFile path
+  vec <- VM.new (length fs * 24)
+  void $ foldlM (writeVec vs vts vns vec) (0 :: Int) fs
   toRawModel vec
  where
+  build line (!vs, !vts, !vns, !fs) = case line of
+    'v' :< 't' :< _ -> (vs, run (parse2d "vt") line:vts, vns, fs)
+    'v' :< 'n' :< _ -> (vs, vts, run (parse3d "vn") line:vns, fs)
+    'v' :< _        -> (run (parse3d "v") line:vs, vts, vns, fs)
+    'f' :< _        -> (vs, vts, vns, run parseFragment line:fs)
+    _               -> (vs, vts, vns, fs)
+  writeVec :: V.Vector ThreeDPoint -> V.Vector TwoDPoint -> V.Vector ThreeDPoint -> VM.IOVector GLfloat -> Int -> FData -> IO Int
   writeVec vs vts vns vec i f = liftIO $ do
     writeVertex i (fA f) vec vs vts vns
     writeVertex (i + 8) (fB f) vec vs vts vns
     writeVertex (i + 16) (fC f) vec vs vts vns
     return (i + 24)
+  writeVertex :: Int -> ThreeTuple -> VM.IOVector GLfloat -> V.Vector ThreeDPoint -> V.Vector TwoDPoint -> V.Vector ThreeDPoint -> IO ()
   writeVertex i (ThreeTuple a b c) vec vs vts vns = do
-    for_ (A.getIndex vs (a - 1)) $ \v -> do
+    for_ (vs V.!? (a - 1)) $ \v -> do
       VM.write vec i (threeDX v)
       VM.write vec (i + 1) (threeDY v)
       VM.write vec (i + 2) (threeDZ v)
-    for_ (A.getIndex vts (b - 1)) $ \vt -> do
+    for_ (vts V.!? (b - 1)) $ \vt -> do
       VM.write vec (i + 3) (twoDX vt)
       VM.write vec (i + 4) (twoDY vt)
-    for_ (A.getIndex vns (c - 1)) $ \vn -> do
+    for_ (vns V.!? (c - 1)) $ \vn -> do
       VM.write vec (i + 5) (threeDX vn)
       VM.write vec (i + 6) (threeDY vn)
       VM.write vec (i + 7) (threeDZ vn)
 
-  foldV = Fold.filter (isC 'v') (Fold.lmap (run (parse3d "v")) A.write)
-  foldVt = Fold.filter (isVC 't') (Fold.lmap (run (parse2d "vt")) A.write)
-  foldVn = Fold.filter (isVC 'n') (Fold.lmap (run (parse3d "vn")) A.write)
-  foldF = Fold.filter (isC 'f') (Fold.lmap (run parseFragment) A.write)
-  combinedFolds = toFold $
-    (,,,) <$> Tee foldV <*> Tee foldVt <*> Tee foldVn <*> Tee foldF
-
   run p = either error id . parseOnly p
-  isC c arr = BSC.index arr 0 == c && BSC.index arr 1 == ' '
-  isVC c arr = BSC.index arr 0 == 'v' && BSC.index arr 1 == c
 
   parse2d s = TwoDPoint
           <$> (string s *> skipSpace *> signed rational <* skipSpace)
@@ -258,8 +254,10 @@ loadObj path = do
     vSize = fromIntegral $ sizeOf (undefined :: GLfloat) * VM.length v
     stride = fromIntegral $ sizeOf (undefined :: GLfloat) * 8
 
-parseCharacter :: BS.ByteString -> Character
-parseCharacter = either error id . parseOnly parse'
+parseCharacter :: BS.ByteString -> Maybe Character
+parseCharacter bs = case parseOnly parse' bs of
+  Left _ -> Nothing
+  Right r -> Just r
  where
   parse' = Character
        <$> (string "char id=" *> signed decimal <* skipSpace)
@@ -274,14 +272,17 @@ parseCharacter = either error id . parseOnly parse'
 loadFont :: FilePath -> IO (VM.IOVector Character)
 loadFont path = do
   chars <- VM.new 256
-  withFile path ReadMode $ \handle ->
-    S.unfold SF.read handle
-      & S.splitOn (== 10) SBS.write
-      & S.drop 4
-      & S.filter ((> 0) . BS.length)
-      & S.map parseCharacter
-      & S.mapM_ (\ch -> VM.write chars (charId ch) ch)
+  withFile path ReadMode $ go chars
   return chars
+ where
+  go chars handle = do
+    isFileEnd <- hIsEOF handle
+    unless isFileEnd $ do
+      line <- BSC.hGetLine handle
+      case parseCharacter line of
+        Just ch -> VM.write chars (charId ch) ch
+        Nothing -> pure ()
+      go chars handle
 
 loadTexture :: FilePath -> IO Texture
 loadTexture path = do
