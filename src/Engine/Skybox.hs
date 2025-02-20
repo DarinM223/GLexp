@@ -1,4 +1,4 @@
-{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE MultilineStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 module Engine.Skybox
   ( Program
@@ -26,44 +26,43 @@ import Graphics.GL.Types
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Vector.Storable as V
 import qualified Linear
-import qualified Text.RawString.QQ as QQ
 
 vertexShaderSrc :: ByteString
 vertexShaderSrc = BS.pack
-  [QQ.r|
-    #version 330 core
-    layout (location = 0) in vec3 position;
-    out vec3 v_texCoord;
-    uniform mat4 projection;
-    uniform mat4 view;
+  """
+  #version 330 core
+  layout (location = 0) in vec3 position;
+  out vec3 v_texCoord;
+  uniform mat4 projection;
+  uniform mat4 view;
 
-    void main() {
-      v_texCoord = position;
-      vec4 pos = projection * view * vec4(position, 1.0);
-      gl_Position = pos.xyww;
-    }
-  |]
+  void main() {
+    v_texCoord = position;
+    vec4 pos = projection * view * vec4(position, 1.0);
+    gl_Position = pos.xyww;
+  }
+  """
 
 fragmentShaderSrc :: ByteString
 fragmentShaderSrc = BS.pack
-  [QQ.r|
-    #version 330 core
-    in vec3 v_texCoord;
-    out vec4 color;
+  """
+  #version 330 core
+  in vec3 v_texCoord;
+  out vec4 color;
 
-    uniform samplerCube skybox;
-    uniform vec3 skyColor;
+  uniform samplerCube skybox;
+  uniform vec3 skyColor;
 
-    const float lowerLimit = 0.0;
-    const float upperLimit = 40.0 / 100.0;
+  const float lowerLimit = 0.0;
+  const float upperLimit = 40.0 / 100.0;
 
-    void main() {
-      vec4 finalColor = texture(skybox, v_texCoord);
-      float factor = (v_texCoord.y - lowerLimit) / (upperLimit - lowerLimit);
-      factor = clamp(factor, 0.0, 1.0);
-      color = mix(vec4(skyColor, 1.0), finalColor, factor);
-    }
-  |]
+  void main() {
+    vec4 finalColor = texture(skybox, v_texCoord);
+    float factor = (v_texCoord.y - lowerLimit) / (upperLimit - lowerLimit);
+    factor = clamp(factor, 0.0, 1.0);
+    color = mix(vec4(skyColor, 1.0), finalColor, factor);
+  }
+  """
 
 vertexBuffer :: V.Vector GLfloat
 vertexBuffer = V.fromList

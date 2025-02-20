@@ -1,4 +1,4 @@
-{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE MultilineStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 module Engine.Particle
   ( Program
@@ -32,54 +32,53 @@ import qualified Data.Vector.Storable as V
 import qualified Data.Vector.Storable.Mutable as VM
 import qualified Engine.Utils as Utils
 import qualified Linear
-import qualified Text.RawString.QQ as QQ
 
 vertexShaderSrc :: BS.ByteString
 vertexShaderSrc = BS.pack
-  [QQ.r|
-    #version 330 core
+  """
+  #version 330 core
 
-    in vec2 position;
-    in mat4 modelView;
-    in vec4 texOffsets;
-    in float blendFactor;
+  in vec2 position;
+  in mat4 modelView;
+  in vec4 texOffsets;
+  in float blendFactor;
 
-    out vec2 texCoord1;
-    out vec2 texCoord2;
-    out float blend;
+  out vec2 texCoord1;
+  out vec2 texCoord2;
+  out float blend;
 
-    uniform mat4 projection;
-    uniform float numberOfRows;
+  uniform mat4 projection;
+  uniform float numberOfRows;
 
-    void main() {
-      vec2 texCoord = position + vec2(0.5, 0.5);
-      texCoord.y = 1.0 - texCoord.y;
-      texCoord /= numberOfRows;
-      texCoord1 = texCoord + texOffsets.xy;
-      texCoord2 = texCoord + texOffsets.zw;
-      blend = blendFactor;
+  void main() {
+    vec2 texCoord = position + vec2(0.5, 0.5);
+    texCoord.y = 1.0 - texCoord.y;
+    texCoord /= numberOfRows;
+    texCoord1 = texCoord + texOffsets.xy;
+    texCoord2 = texCoord + texOffsets.zw;
+    blend = blendFactor;
 
-      gl_Position = projection * modelView * vec4(position, 0.0, 1.0);
-    }
-  |]
+    gl_Position = projection * modelView * vec4(position, 0.0, 1.0);
+  }
+  """
 
 fragmentShaderSrc :: BS.ByteString
 fragmentShaderSrc = BS.pack
-  [QQ.r|
-    #version 330 core
-    in vec2 texCoord1;
-    in vec2 texCoord2;
-    in float blend;
-    out vec4 color;
+  """
+  #version 330 core
+  in vec2 texCoord1;
+  in vec2 texCoord2;
+  in float blend;
+  out vec4 color;
 
-    uniform sampler2D tex;
+  uniform sampler2D tex;
 
-    void main() {
-      vec4 color1 = texture(tex, texCoord1);
-      vec4 color2 = texture(tex, texCoord2);
-      color = mix(color1, color2, blend);
-    }
-  |]
+  void main() {
+    vec4 color1 = texture(tex, texCoord1);
+    vec4 color2 = texture(tex, texCoord2);
+    color = mix(color1, color2, blend);
+  }
+  """
 
 gravity :: GLfloat
 gravity = -50
